@@ -1020,10 +1020,11 @@ function applyRule() {
 
   // Aktuelle Mail verschieben, danach alle weiteren aus dem Posteingang
   moveCurrentEmail(folderId, () => {
-    moveAllFromSender(currentEmail.sender, folderId, count => {
+    moveAllFromSender(currentEmail.sender, folderId, (moved, skipped) => {
       renderRules();
-      const total = 1 + count;
-      showToast(`${total} Mail${total !== 1 ? 's' : ''} nach "${folderName}" verschoben ✦`, 'success');
+      const total = 1 + moved;
+      const skipNote = skipped > 0 ? ` · ${skipped} nicht-Newsletter belassen` : '';
+      showToast(`${total} Mail${total !== 1 ? 's' : ''} nach "${folderName}" verschoben${skipNote} ✦`, 'success');
     });
   });
 }
@@ -1047,7 +1048,19 @@ function moveCurrentEmail(folderId, callback) {
   Office.context.mailbox.makeEwsRequestAsync(ews, () => callback());
 }
 
-// Find all emails from sender across all folders (except target) and move them
+// Returns true if a Message EWS element looks like a newsletter
+// (List-Unsubscribe header present OR subject contains newsletter keywords)
+function looksLikeNewsletter(msgEl) {
+  const headers = msgEl.querySelectorAll('InternetMessageHeader');
+  for (const h of headers) {
+    if (h.getAttribute('HeaderName')?.toLowerCase() === 'list-unsubscribe') return true;
+  }
+  const subject = msgEl.querySelector('Subject')?.textContent?.toLowerCase() || '';
+  const NL_KEYWORDS = ['newsletter','angebot','rabatt','deal','sale','promo','gutschein','aktion','spar','% off','% rabatt'];
+  return NL_KEYWORDS.some(kw => subject.includes(kw));
+}
+
+// Find all newsletter emails from sender across all folders (except target) and move them
 function moveAllFromSender(sender, folderId, callback) {
   const findEws = `<?xml version="1.0" encoding="utf-8"?>
 <soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"
@@ -1059,6 +1072,8 @@ function moveAllFromSender(sender, folderId, callback) {
         <t:BaseShape>IdOnly</t:BaseShape>
         <t:AdditionalProperties>
           <t:FieldURI FieldURI="item:ParentFolderId"/>
+          <t:FieldURI FieldURI="item:Subject"/>
+          <t:FieldURI FieldURI="message:InternetMessageHeaders"/>
         </t:AdditionalProperties>
       </m:ItemShape>
       <m:IndexedPageItemView MaxEntriesReturned="500" Offset="0" BasePoint="Beginning"/>
@@ -1074,17 +1089,19 @@ function moveAllFromSender(sender, folderId, callback) {
 </soap:Envelope>`;
 
   Office.context.mailbox.makeEwsRequestAsync(findEws, function(result) {
-    if (result.status !== Office.AsyncResultStatus.Succeeded) { callback(0); return; }
+    if (result.status !== Office.AsyncResultStatus.Succeeded) { callback(0, 0); return; }
 
     const doc = new DOMParser().parseFromString(result.value, 'text/xml');
+    const allMessages = Array.from(doc.querySelectorAll('Message'))
+      .filter(m => m.querySelector('ParentFolderId')?.getAttribute('Id') !== folderId);
 
-    // Exclude items already in the target folder
-    const items = Array.from(doc.querySelectorAll('Message'))
-      .filter(m => m.querySelector('ParentFolderId')?.getAttribute('Id') !== folderId)
+    const skipped = allMessages.filter(m => !looksLikeNewsletter(m)).length;
+    const items   = allMessages
+      .filter(m => looksLikeNewsletter(m))
       .map(m => m.querySelector('ItemId'))
       .filter(Boolean);
 
-    if (items.length === 0) { callback(0); return; }
+    if (items.length === 0) { callback(0, skipped); return; }
 
     let moved = 0;
     const batches = [];
@@ -1107,7 +1124,7 @@ function moveAllFromSender(sender, folderId, callback) {
 </soap:Envelope>`;
       Office.context.mailbox.makeEwsRequestAsync(moveEws, () => {
         moved += batch.length;
-        if (moved >= items.length) callback(items.length);
+        if (moved >= items.length) callback(items.length, skipped);
       });
     });
   });
