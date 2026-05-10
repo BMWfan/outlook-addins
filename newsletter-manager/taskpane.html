@@ -513,7 +513,7 @@
     <div class="config-section">
       <div class="section-label">📁 Zielordner</div>
       <div class="folder-row">
-        <select id="folderSelect">
+        <select id="folderSelect" onclick="loadFoldersOnce()">
           <option value="">Ordner laden…</option>
         </select>
         <button class="btn-new-folder" onclick="toggleNewFolder()">+ Neu</button>
@@ -593,7 +593,8 @@ let currentEmail = { sender: '', senderName: '', subject: '', body: '' };
 let currentWords = [];
 let isNewsletter = false;
 let keepLimit    = 5;
-let folders      = [];
+let folders        = [];
+let foldersLoading = false;
 let rules         = JSON.parse(localStorage.getItem('nlm_rules')          || '[]');
 let overrides     = JSON.parse(localStorage.getItem('nlm_overrides')      || '{}');
 let defaultFolder = JSON.parse(localStorage.getItem('nlm_default_folder') || 'null');
@@ -752,7 +753,6 @@ function loadCurrentEmail() {
     analyzeEmail();
   });
 
-  loadFolders();
 }
 
 // ══════════════════════════════════════════════════
@@ -842,6 +842,7 @@ function confirmNewsletter() {
   document.getElementById('applyBtn').style.display   = 'block';
   document.getElementById('detectionBadge').innerHTML =
     `<span class="newsletter-badge">✦ Als Newsletter markiert</span>`;
+  loadFoldersOnce(); // user-gesture context → displayDialogAsync allowed
 }
 
 function denyNewsletter() {
@@ -948,6 +949,14 @@ async function graphFetch(path, opts = {}) {
 // ══════════════════════════════════════════════════
 //  ORDNER
 // ══════════════════════════════════════════════════
+//  ORDNER
+// ══════════════════════════════════════════════════
+function loadFoldersOnce() {
+  if (folders.length > 0 || foldersLoading) return;
+  foldersLoading = true;
+  loadFolders().finally(() => { foldersLoading = false; });
+}
+
 async function loadFolders() {
   folders = [];
   try {
@@ -1024,6 +1033,14 @@ function changeLimit(delta) {
 //  REGEL ANWENDEN
 // ══════════════════════════════════════════════════
 function applyRule() {
+  // Fallback: if folders not loaded yet (auto-detected newsletter), load now.
+  // applyRule is always triggered by a button click = user gesture = dialog allowed.
+  if (folders.length === 0) {
+    loadFoldersOnce();
+    showToast('Ordner werden geladen – bitte danach Ordner wählen und erneut klicken.', 'success');
+    return;
+  }
+
   const folderId   = document.getElementById('folderSelect').value;
   const folderObj  = folders.find(f => f.id === folderId);
   const folderName = folderObj?.displayName || folderObj?.name || folderId;
