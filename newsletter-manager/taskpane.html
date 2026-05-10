@@ -1123,7 +1123,15 @@ async function createExchangeRule(sender, senderName, folderId) {
       displayName: name,
       sequence:    100,
       isEnabled:   true,
-      conditions:  { senderContains: [sender] },
+      conditions:  {
+        senderContains: [sender],
+        // Require a newsletter signal in subject or body so personal emails
+        // from the same address are not moved.
+        bodyOrSubjectContains: [
+          'unsubscribe','abmelden','abbestellen','newsletter','opt-out','opt out',
+          'aus dem verteiler','no longer receive','list-unsubscribe','abonnement'
+        ]
+      },
       actions:     { moveToFolder: folderId }
     });
     if (dup) {
