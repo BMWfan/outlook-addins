@@ -578,6 +578,15 @@
 
 <script>
 // ══════════════════════════════════════════════════
+//  UTILITIES
+// ══════════════════════════════════════════════════
+function esc(str) {
+  return String(str == null ? '' : str)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+// ══════════════════════════════════════════════════
 //  STATE
 // ══════════════════════════════════════════════════
 let currentEmail = { sender: '', senderName: '', subject: '', body: '' };
@@ -950,11 +959,11 @@ async function loadFolders() {
     }
     folders.sort((a, b) => a.displayName.localeCompare(b.displayName));
     console.log('[NLM] Graph folders:', folders.length);
+    renderFolderSelect();
   } catch (e) {
     console.error('[NLM] loadFolders failed:', e.message);
     showToast('Ordner konnten nicht geladen werden: ' + e.message, 'error');
   }
-  renderFolderSelect();
 }
 
 function renderFolderSelect() {

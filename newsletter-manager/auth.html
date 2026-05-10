@@ -23,6 +23,8 @@
     <p id="msg">Anmeldung läuft…</p>
   </div>
   <script>
+    const SCOPES = ['Mail.ReadWrite'];
+
     // Start MSAL immediately so the auth-code hash is captured before anything cleans it up.
     const msalApp = new msal.PublicClientApplication({
       auth: {
@@ -34,28 +36,38 @@
     });
     const redirectPromise = msalApp.handleRedirectPromise();
 
+    function send(payload) {
+      Office.context.ui.messageParent(JSON.stringify(payload));
+    }
+
     // Wait for Office to be ready before calling messageParent.
     Office.onReady(async function() {
       try {
+        // Case 1: coming back from Microsoft redirect with auth code
         const response = await redirectPromise;
         if (response && response.accessToken) {
-          Office.context.ui.messageParent(JSON.stringify({
-            status: 'success',
-            token:  response.accessToken
-          }));
+          send({ status: 'success', token: response.accessToken });
           return;
         }
-        // First load — redirect to Microsoft login.
+
+        // Case 2: MSAL already has a cached account — try silent renewal (no redirect needed)
+        const accounts = msalApp.getAllAccounts();
+        if (accounts.length > 0) {
+          try {
+            const silent = await msalApp.acquireTokenSilent({ scopes: SCOPES, account: accounts[0] });
+            send({ status: 'success', token: silent.accessToken });
+            return;
+          } catch (_) {
+            // silent failed — fall through to interactive redirect below
+          }
+        }
+
+        // Case 3: first login — redirect to Microsoft
         document.getElementById('msg').textContent = 'Weiterleitung zu Microsoft…';
-        await msalApp.loginRedirect({ scopes: ['Mail.ReadWrite'] });
+        await msalApp.loginRedirect({ scopes: SCOPES });
       } catch (e) {
         document.getElementById('msg').textContent = 'Fehler: ' + e.message;
-        try {
-          Office.context.ui.messageParent(JSON.stringify({
-            status:  'error',
-            message: e.message
-          }));
-        } catch (_) {}
+        try { send({ status: 'error', message: e.message }); } catch (_) {}
       }
     });
   </script>
