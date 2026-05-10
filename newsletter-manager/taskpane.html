@@ -5,7 +5,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>Newsletter Manager</title>
   <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
-  <script src="https://bmwfan.github.io/outlook-addins/newsletter-manager/msal-browser.min.js"></script>
   <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet"/>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -878,47 +877,32 @@ function deleteOverride(senderKey) {
 // ══════════════════════════════════════════════════
 //  MSAL / GRAPH HELPER
 // ══════════════════════════════════════════════════
-let _msalInstance = null;
-let _graphToken   = null;
-let _tokenExpiry  = 0;
-const GRAPH_SCOPES = ['Mail.ReadWrite'];
+// ── Graph token: cached in localStorage, renewed via Office dialog ──
+const AUTH_URL     = 'https://bmwfan.github.io/outlook-addins/newsletter-manager/auth.html';
+const TOKEN_KEY    = 'nlm_graph_token';
 
-function getMsal() {
-  if (!_msalInstance) {
-    _msalInstance = new msal.PublicClientApplication({
-      auth: {
-        clientId:    '0ad0c612-487d-4285-82b4-132de22f7642',
-        authority:   'https://login.microsoftonline.com/common',
-        redirectUri: 'https://bmwfan.github.io/outlook-addins/newsletter-manager/auth.html'
-      },
-      cache: { cacheLocation: 'localStorage', storeAuthStateInCookie: true }
-    });
-  }
-  return _msalInstance;
+function getCachedToken() {
+  try {
+    const s = JSON.parse(localStorage.getItem(TOKEN_KEY));
+    if (s && Date.now() < s.expiry) return s.token;
+  } catch(_) {}
+  return null;
 }
 
-async function getGraphToken() {
-  // Return cached token if still valid
-  if (_graphToken && Date.now() < _tokenExpiry) return _graphToken;
+function cacheToken(token) {
+  localStorage.setItem(TOKEN_KEY, JSON.stringify({
+    token, expiry: Date.now() + 50 * 60 * 1000
+  }));
+}
 
-  // Try silent renewal via MSAL cache
-  const msalApp  = getMsal();
-  const accounts = msalApp.getAllAccounts();
-  if (accounts.length > 0) {
-    try {
-      const r = await msalApp.acquireTokenSilent({ scopes: GRAPH_SCOPES, account: accounts[0] });
-      _graphToken  = r.accessToken;
-      _tokenExpiry = Date.now() + 50 * 60 * 1000;
-      return _graphToken;
-    } catch(_) {}
-  }
+function getGraphToken() {
+  const cached = getCachedToken();
+  if (cached) return Promise.resolve(cached);
 
-  // Interactive login via Office.js dialog (works in iframe context)
   return new Promise((resolve, reject) => {
-    const authUrl = 'https://bmwfan.github.io/outlook-addins/newsletter-manager/auth.html';
-    Office.context.ui.displayDialogAsync(authUrl, { height: 60, width: 40 }, result => {
+    Office.context.ui.displayDialogAsync(AUTH_URL, { height: 60, width: 40 }, result => {
       if (result.status !== Office.AsyncResultStatus.Succeeded) {
-        reject(new Error('Login-Dialog konnte nicht geöffnet werden: ' + result.error?.message));
+        reject(new Error('Login-Dialog konnte nicht geöffnet werden: ' + (result.error?.message || '')));
         return;
       }
       const dialog = result.value;
@@ -926,13 +910,8 @@ async function getGraphToken() {
         dialog.close();
         try {
           const msg = JSON.parse(ev.message);
-          if (msg.status === 'success') {
-            _graphToken  = msg.token;
-            _tokenExpiry = Date.now() + 50 * 60 * 1000;
-            resolve(msg.token);
-          } else {
-            reject(new Error(msg.message || 'Login fehlgeschlagen'));
-          }
+          if (msg.status === 'success') { cacheToken(msg.token); resolve(msg.token); }
+          else reject(new Error(msg.message || 'Login fehlgeschlagen'));
         } catch (e) { reject(e); }
       });
       dialog.addEventHandler(Office.EventType.DialogEventReceived, ev => {
