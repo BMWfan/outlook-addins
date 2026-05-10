@@ -588,6 +588,7 @@ let folders      = [];
 let rules         = JSON.parse(localStorage.getItem('nlm_rules')          || '[]');
 let overrides     = JSON.parse(localStorage.getItem('nlm_overrides')      || '{}');
 let defaultFolder = JSON.parse(localStorage.getItem('nlm_default_folder') || 'null');
+let _restToken    = null;
 
 // Newsletter-Erkennungs-Signale
 const NEWSLETTER_SIGNALS = [
@@ -875,53 +876,58 @@ function deleteOverride(senderKey) {
 }
 
 // ══════════════════════════════════════════════════
+//  REST HELPER
+// ══════════════════════════════════════════════════
+function getRestToken() {
+  return new Promise((resolve, reject) => {
+    Office.context.mailbox.getCallbackTokenAsync({ isRest: true }, r => {
+      if (r.status === Office.AsyncResultStatus.Succeeded) resolve(r.value);
+      else reject(new Error('REST-Token nicht verfügbar'));
+    });
+  });
+}
+
+function restBase() {
+  return (Office.context.mailbox.restUrl || 'https://outlook.office.com/api') + '/v2.0';
+}
+
+async function restFetch(path, opts = {}) {
+  const token = await getRestToken();
+  const resp = await fetch(restBase() + path, {
+    ...opts,
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', ...(opts.headers || {}) }
+  });
+  if (!resp.ok) {
+    let msg = `HTTP ${resp.status}`;
+    try { const e = await resp.json(); msg = e.error?.message || msg; } catch(_) {}
+    throw new Error(msg);
+  }
+  return resp.status === 204 ? null : resp.json();
+}
+
+// ══════════════════════════════════════════════════
 //  ORDNER
 // ══════════════════════════════════════════════════
-function loadFolders() {
-  Office.context.mailbox.makeEwsRequestAsync(buildFolderEwsRequest(), function(result) {
-    if (result.status === Office.AsyncResultStatus.Succeeded) {
-      parseFolders(result.value);
-    } else {
-      // Fallback: Demo-Ordner
-      folders = [{ id: 'inbox', name: 'Posteingang' }, { id: 'newsletters', name: 'Newsletter' }];
-      renderFolderSelect();
-    }
-  });
-}
-
-function buildFolderEwsRequest() {
-  return `<?xml version="1.0" encoding="utf-8"?>
-<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"
-               xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types"
-               xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages">
-  <soap:Body>
-    <m:FindFolder Traversal="Shallow">
-      <m:FolderShape><t:BaseShape>AllProperties</t:BaseShape></m:FolderShape>
-      <m:ParentFolderIds><t:DistinguishedFolderId Id="msgfolderroot"/></m:ParentFolderIds>
-    </m:FindFolder>
-  </soap:Body>
-</soap:Envelope>`;
-}
-
-function parseFolders(xml) {
-  folders = [];
-  const parser = new DOMParser();
-  const doc = parser.parseFromString(xml, 'text/xml');
-  const folderNodes = doc.querySelectorAll('Folder');
-  folderNodes.forEach(f => {
-    const id = f.querySelector('FolderId')?.getAttribute('Id');
-    const name = f.querySelector('DisplayName')?.textContent;
-    if (id && name) folders.push({ id, name });
-  });
-  if (folders.length === 0) {
-    folders = [{ id: 'inbox', name: 'Posteingang' }, { id: 'newsletters', name: 'Newsletter' }];
+async function loadFolders() {
+  try {
+    const data = await restFetch('/me/mailFolders?$top=250&$select=id,displayName');
+    folders = (data.value || [])
+      .filter(f => f.displayName)
+      .sort((a, b) => a.displayName.localeCompare(b.displayName));
+    console.log('[NLM] Folders loaded via REST:', folders.length);
+  } catch (e) {
+    console.error('[NLM] loadFolders REST failed:', e.message);
+    showToast('Ordner konnten nicht geladen werden: ' + e.message, 'error');
+    folders = [];
   }
   renderFolderSelect();
 }
 
 function renderFolderSelect() {
   const sel = document.getElementById('folderSelect');
-  sel.innerHTML = folders.map(f => `<option value="${f.id}">${f.name}</option>`).join('');
+  sel.innerHTML = folders.map(f =>
+    `<option value="${esc(f.id)}">${esc(f.displayName || f.name)}</option>`
+  ).join('');
 
   const hint = document.getElementById('defaultHint');
   if (defaultFolder && folders.find(f => f.id === defaultFolder.id)) {
@@ -942,48 +948,28 @@ function toggleNewFolder() {
   }
 }
 
-function createFolder() {
+async function createFolder() {
   const name = document.getElementById('newFolderInput').value.trim();
   if (!name) return;
 
-  Office.context.mailbox.makeEwsRequestAsync(buildCreateFolderEws(name), function(result) {
-    if (result.status === Office.AsyncResultStatus.Succeeded) {
-      const parser = new DOMParser();
-      const doc = parser.parseFromString(result.value, 'text/xml');
-      const newId = doc.querySelector('FolderId')?.getAttribute('Id');
-      if (newId) {
-        folders.push({ id: newId, name });
-        renderFolderSelect();
-        document.getElementById('folderSelect').value = newId;
-        document.getElementById('newFolderInput').value = '';
-        document.getElementById('newFolderRow').classList.remove('visible');
-        showToast(`Ordner "${name}" erstellt ✓`, 'success');
-      }
-    } else {
-      // Fallback für Demo
-      const fakeId = 'folder_' + Date.now();
-      folders.push({ id: fakeId, name });
-      renderFolderSelect();
-      document.getElementById('folderSelect').value = fakeId;
-      document.getElementById('newFolderInput').value = '';
-      document.getElementById('newFolderRow').classList.remove('visible');
-      showToast(`Ordner "${name}" erstellt ✓`, 'success');
-    }
-  });
-}
-
-function buildCreateFolderEws(name) {
-  return `<?xml version="1.0" encoding="utf-8"?>
-<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"
-               xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types"
-               xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages">
-  <soap:Body>
-    <m:CreateFolder>
-      <m:ParentFolderId><t:DistinguishedFolderId Id="msgfolderroot"/></m:ParentFolderId>
-      <m:Folders><t:Folder><t:DisplayName>${name}</t:DisplayName></t:Folder></m:Folders>
-    </m:CreateFolder>
-  </soap:Body>
-</soap:Envelope>`;
+  try {
+    const data = await restFetch('/me/mailFolders', {
+      method: 'POST',
+      body: JSON.stringify({ displayName: name })
+    });
+    const newId = data.id;
+    folders.push({ id: newId, displayName: name });
+    folders.sort((a, b) => (a.displayName||a.name).localeCompare(b.displayName||b.name));
+    renderFolderSelect();
+    document.getElementById('folderSelect').value = newId;
+    document.getElementById('newFolderInput').value = '';
+    document.getElementById('newFolderRow').classList.remove('visible');
+    showToast(`Ordner "${name}" erstellt ✓`, 'success');
+    console.log('[NLM] Folder created:', newId, name);
+  } catch (e) {
+    console.error('[NLM] createFolder failed:', e.message);
+    showToast(`Ordner konnte nicht erstellt werden: ${e.message}`, 'error');
+  }
 }
 
 // ══════════════════════════════════════════════════
@@ -1018,126 +1004,84 @@ function applyRule() {
   document.getElementById('applyBtn').disabled = true;
   showToast(`Verschiebe alle Mails von "${currentEmail.senderName}"…`, 'success');
 
-  // Aktuelle Mail verschieben, danach alle weiteren aus dem Posteingang
-  moveCurrentEmail(folderId, () => {
+  // Aktuelle Mail verschieben, danach alle weiteren
+  moveCurrentEmail(folderId, (currentMoved) => {
     moveAllFromSender(currentEmail.sender, folderId, (moved, skipped) => {
       renderRules();
-      const total = 1 + moved;
-      const skipNote = skipped > 0 ? ` · ${skipped} nicht-Newsletter belassen` : '';
-      showToast(`${total} Mail${total !== 1 ? 's' : ''} nach "${folderName}" verschoben${skipNote} ✦`, 'success');
+      const total = (currentMoved ? 1 : 0) + moved;
+      if (total === 0) {
+        showToast('Keine Mails konnten verschoben werden. Siehe Konsole (F12).', 'error');
+      } else {
+        const skipNote = skipped > 0 ? ` · ${skipped} nicht-Newsletter belassen` : '';
+        showToast(`${total} Mail${total !== 1 ? 's' : ''} nach "${folderName}" verschoben${skipNote} ✦`, 'success');
+      }
     });
   });
 }
 
-function moveCurrentEmail(folderId, callback) {
-  let itemId = Office.context.mailbox.item.itemId;
-  if (!itemId) { showToast('Fehler: Item-ID nicht verfügbar.', 'error'); callback(); return; }
+async function moveCurrentEmail(folderId, callback) {
+  const itemId = Office.context.mailbox.item.itemId;
+  if (!itemId) { showToast('Fehler: Item-ID nicht verfügbar.', 'error'); callback(false); return; }
 
-  // Outlook Web returns REST-format IDs – convert to EWS format for MoveItem
   try {
-    itemId = Office.context.mailbox.convertToEwsId(itemId, Office.MailboxEnums.RestVersion.v2_0);
-  } catch(_) {}
-
-  const ews = `<?xml version="1.0" encoding="utf-8"?>
-<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"
-               xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types"
-               xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages">
-  <soap:Body>
-    <m:MoveItem>
-      <m:ToFolderId><t:FolderId Id="${folderId}"/></m:ToFolderId>
-      <m:ItemIds><t:ItemId Id="${itemId}"/></m:ItemIds>
-    </m:MoveItem>
-  </soap:Body>
-</soap:Envelope>`;
-
-  Office.context.mailbox.makeEwsRequestAsync(ews, function(result) {
-    if (result.status !== Office.AsyncResultStatus.Succeeded) {
-      showToast(`EWS Fehler: ${result.error?.message || JSON.stringify(result.error)}`, 'error');
-    }
-    callback();
-  });
-}
-
-// Returns true if a Message EWS element looks like a newsletter
-// (List-Unsubscribe header present OR subject contains newsletter keywords)
-function looksLikeNewsletter(msgEl) {
-  const headers = msgEl.querySelectorAll('InternetMessageHeader');
-  for (const h of headers) {
-    if (h.getAttribute('HeaderName')?.toLowerCase() === 'list-unsubscribe') return true;
+    await restFetch(`/me/messages/${encodeURIComponent(itemId)}/move`, {
+      method: 'POST',
+      body: JSON.stringify({ destinationId: folderId })
+    });
+    console.log('[NLM] moveCurrentEmail OK');
+    callback(true);
+  } catch (e) {
+    console.error('[NLM] moveCurrentEmail failed:', e.message);
+    showToast(`Verschieben fehlgeschlagen: ${e.message}`, 'error');
+    callback(false);
   }
-  const subject = msgEl.querySelector('Subject')?.textContent?.toLowerCase() || '';
-  const NL_KEYWORDS = ['newsletter','angebot','rabatt','deal','sale','promo','gutschein','aktion','spar','% off','% rabatt'];
-  return NL_KEYWORDS.some(kw => subject.includes(kw));
 }
 
 // Find all newsletter emails from sender across all folders (except target) and move them
-function moveAllFromSender(sender, folderId, callback) {
-  const findEws = `<?xml version="1.0" encoding="utf-8"?>
-<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"
-               xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types"
-               xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages">
-  <soap:Body>
-    <m:FindItem Traversal="Deep">
-      <m:ItemShape>
-        <t:BaseShape>IdOnly</t:BaseShape>
-        <t:AdditionalProperties>
-          <t:FieldURI FieldURI="item:ParentFolderId"/>
-          <t:FieldURI FieldURI="item:Subject"/>
-          <t:FieldURI FieldURI="message:InternetMessageHeaders"/>
-        </t:AdditionalProperties>
-      </m:ItemShape>
-      <m:IndexedPageItemView MaxEntriesReturned="500" Offset="0" BasePoint="Beginning"/>
-      <m:ParentFolderIds><t:DistinguishedFolderId Id="msgfolderroot"/></m:ParentFolderIds>
-      <m:Restriction>
-        <t:Contains ContainmentMode="Substring" ContainmentComparison="IgnoreCase">
-          <t:FieldURI FieldURI="message:From"/>
-          <t:Constant Value="${sender}"/>
-        </t:Contains>
-      </m:Restriction>
-    </m:FindItem>
-  </soap:Body>
-</soap:Envelope>`;
+async function moveAllFromSender(sender, folderId, callback) {
+  try {
+    const filter = `from/emailAddress/address eq '${sender.replace(/'/g, "''")}'`;
+    let url = `/me/messages?$filter=${encodeURIComponent(filter)}&$select=id,parentFolderId,subject,internetMessageHeaders&$top=100`;
+    let all = [];
 
-  Office.context.mailbox.makeEwsRequestAsync(findEws, function(result) {
-    if (result.status !== Office.AsyncResultStatus.Succeeded) { callback(0, 0); return; }
+    while (url) {
+      const data = await restFetch(url);
+      all = all.concat(data.value || []);
+      const next = data['@odata.nextLink'];
+      url = next ? next.replace(restBase(), '') : null;
+    }
 
-    const doc = new DOMParser().parseFromString(result.value, 'text/xml');
-    const allMessages = Array.from(doc.querySelectorAll('Message'))
-      .filter(m => m.querySelector('ParentFolderId')?.getAttribute('Id') !== folderId);
+    const candidates = all.filter(m => m.parentFolderId !== folderId);
+    const skipped  = candidates.filter(m => !looksLikeNewsletterRest(m)).length;
+    const toMove   = candidates.filter(m => looksLikeNewsletterRest(m));
 
-    const skipped = allMessages.filter(m => !looksLikeNewsletter(m)).length;
-    const items   = allMessages
-      .filter(m => looksLikeNewsletter(m))
-      .map(m => m.querySelector('ItemId'))
-      .filter(Boolean);
-
-    if (items.length === 0) { callback(0, skipped); return; }
+    console.log('[NLM] moveAllFromSender: found', all.length, '→ toMove', toMove.length, 'skip', skipped);
 
     let moved = 0;
-    const batches = [];
-    for (let i = 0; i < items.length; i += 100) batches.push(items.slice(i, i + 100));
+    for (const msg of toMove) {
+      try {
+        await restFetch(`/me/messages/${encodeURIComponent(msg.id)}/move`, {
+          method: 'POST',
+          body: JSON.stringify({ destinationId: folderId })
+        });
+        moved++;
+      } catch (e) {
+        console.warn('[NLM] Could not move message', msg.id, e.message);
+      }
+    }
+    callback(moved, skipped);
+  } catch (e) {
+    console.error('[NLM] moveAllFromSender failed:', e.message);
+    callback(0, 0);
+  }
+}
 
-    batches.forEach(batch => {
-      const ids = batch.map(i =>
-        `<t:ItemId Id="${i.getAttribute('Id')}" ChangeKey="${i.getAttribute('ChangeKey')}"/>`
-      ).join('');
-      const moveEws = `<?xml version="1.0" encoding="utf-8"?>
-<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"
-               xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types"
-               xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages">
-  <soap:Body>
-    <m:MoveItem>
-      <m:ToFolderId><t:FolderId Id="${folderId}"/></m:ToFolderId>
-      <m:ItemIds>${ids}</m:ItemIds>
-    </m:MoveItem>
-  </soap:Body>
-</soap:Envelope>`;
-      Office.context.mailbox.makeEwsRequestAsync(moveEws, () => {
-        moved += batch.length;
-        if (moved >= items.length) callback(items.length, skipped);
-      });
-    });
-  });
+function looksLikeNewsletterRest(msg) {
+  const headers = msg.internetMessageHeaders || [];
+  if (headers.some(h => h.name.toLowerCase() === 'list-unsubscribe')) return true;
+  const subject = (msg.subject || '').toLowerCase();
+  const KW = ['newsletter','angebot','rabatt','deal','sale','promo','gutschein','aktion','spar','% off','% rabatt'];
+  return KW.some(kw => subject.includes(kw));
 }
 
 // ══════════════════════════════════════════════════
