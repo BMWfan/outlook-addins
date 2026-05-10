@@ -1047,17 +1047,22 @@ function moveCurrentEmail(folderId, callback) {
   Office.context.mailbox.makeEwsRequestAsync(ews, () => callback());
 }
 
-// Find all remaining emails from sender in inbox and move them in batches
+// Find all emails from sender across all folders (except target) and move them
 function moveAllFromSender(sender, folderId, callback) {
   const findEws = `<?xml version="1.0" encoding="utf-8"?>
 <soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"
                xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types"
                xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages">
   <soap:Body>
-    <m:FindItem Traversal="Shallow">
-      <m:ItemShape><t:BaseShape>IdOnly</t:BaseShape></m:ItemShape>
+    <m:FindItem Traversal="Deep">
+      <m:ItemShape>
+        <t:BaseShape>IdOnly</t:BaseShape>
+        <t:AdditionalProperties>
+          <t:FieldURI FieldURI="item:ParentFolderId"/>
+        </t:AdditionalProperties>
+      </m:ItemShape>
       <m:IndexedPageItemView MaxEntriesReturned="500" Offset="0" BasePoint="Beginning"/>
-      <m:ParentFolderIds><t:DistinguishedFolderId Id="inbox"/></m:ParentFolderIds>
+      <m:ParentFolderIds><t:DistinguishedFolderId Id="msgfolderroot"/></m:ParentFolderIds>
       <m:Restriction>
         <t:Contains ContainmentMode="Substring" ContainmentComparison="IgnoreCase">
           <t:FieldURI FieldURI="message:From"/>
@@ -1071,8 +1076,14 @@ function moveAllFromSender(sender, folderId, callback) {
   Office.context.mailbox.makeEwsRequestAsync(findEws, function(result) {
     if (result.status !== Office.AsyncResultStatus.Succeeded) { callback(0); return; }
 
-    const doc   = new DOMParser().parseFromString(result.value, 'text/xml');
-    const items = Array.from(doc.querySelectorAll('ItemId'));
+    const doc = new DOMParser().parseFromString(result.value, 'text/xml');
+
+    // Exclude items already in the target folder
+    const items = Array.from(doc.querySelectorAll('Message'))
+      .filter(m => m.querySelector('ParentFolderId')?.getAttribute('Id') !== folderId)
+      .map(m => m.querySelector('ItemId'))
+      .filter(Boolean);
+
     if (items.length === 0) { callback(0); return; }
 
     let moved = 0;
