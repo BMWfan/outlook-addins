@@ -440,6 +440,12 @@
     .override-type.nl { color: var(--green); border-color: rgba(74,222,128,0.3); background: var(--green-dim); }
     .override-type.not-nl { color: var(--red); border-color: rgba(248,113,113,0.3); background: var(--red-dim); }
 
+    /* Default folder hint + checkbox */
+    .folder-meta { display: flex; align-items: center; justify-content: space-between; margin-top: 7px; min-height: 16px; }
+    .default-hint { font-family: var(--font-mono); font-size: 10px; color: var(--accent); }
+    .set-default-label { display: flex; align-items: center; gap: 4px; font-size: 10px; color: var(--muted); cursor: pointer; user-select: none; margin-left: auto; }
+    .set-default-label input[type="checkbox"] { accent-color: var(--accent); width: 11px; height: 11px; margin: 0; cursor: pointer; }
+
     /* Naive Bayes section */
     #nbSection { padding: 0 14px 10px; }
     .nb-progress { font-size: 10px; color: var(--muted); font-family: var(--font-mono); }
@@ -516,6 +522,12 @@
         <input type="text" id="newFolderInput" placeholder="Ordnername eingeben…"/>
         <button class="btn-create" onclick="createFolder()">Erstellen</button>
       </div>
+      <div class="folder-meta">
+        <span class="default-hint" id="defaultHint" style="display:none;">📌 Standard-Ordner</span>
+        <label class="set-default-label">
+          <input type="checkbox" id="setAsDefault"/> Als Standard merken
+        </label>
+      </div>
     </div>
 
     <div class="config-section">
@@ -573,8 +585,9 @@ let currentWords = [];
 let isNewsletter = false;
 let keepLimit    = 5;
 let folders      = [];
-let rules     = JSON.parse(localStorage.getItem('nlm_rules')     || '[]');
-let overrides = JSON.parse(localStorage.getItem('nlm_overrides') || '{}');
+let rules         = JSON.parse(localStorage.getItem('nlm_rules')          || '[]');
+let overrides     = JSON.parse(localStorage.getItem('nlm_overrides')      || '{}');
+let defaultFolder = JSON.parse(localStorage.getItem('nlm_default_folder') || 'null');
 
 // Newsletter-Erkennungs-Signale
 const NEWSLETTER_SIGNALS = [
@@ -908,9 +921,17 @@ function parseFolders(xml) {
 
 function renderFolderSelect() {
   const sel = document.getElementById('folderSelect');
-  sel.innerHTML = folders.map(f =>
-    `<option value="${f.id}">${f.name}</option>`
-  ).join('');
+  sel.innerHTML = folders.map(f => `<option value="${f.id}">${f.name}</option>`).join('');
+
+  const hint = document.getElementById('defaultHint');
+  if (defaultFolder && folders.find(f => f.id === defaultFolder.id)) {
+    sel.value = defaultFolder.id;
+    hint.textContent = `📌 Standard: ${defaultFolder.name}`;
+    hint.style.display = 'inline';
+    document.getElementById('setAsDefault').checked = false;
+  } else {
+    hint.style.display = 'none';
+  }
 }
 
 function toggleNewFolder() {
@@ -977,29 +998,37 @@ function changeLimit(delta) {
 //  REGEL ANWENDEN
 // ══════════════════════════════════════════════════
 function applyRule() {
-  const folderId = document.getElementById('folderSelect').value;
+  const folderId   = document.getElementById('folderSelect').value;
   const folderName = folders.find(f => f.id === folderId)?.name || folderId;
 
   if (!folderId) { showToast('Bitte einen Ordner auswählen.', 'error'); return; }
 
-  // Regel speichern
+  // Standard-Ordner speichern falls Checkbox aktiv
+  if (document.getElementById('setAsDefault').checked) {
+    defaultFolder = { id: folderId, name: folderName };
+    localStorage.setItem('nlm_default_folder', JSON.stringify(defaultFolder));
+  }
+
+  // Regel speichern (ohne Limit – kein automatisches Löschen)
   const existingIdx = rules.findIndex(r => r.sender === currentEmail.sender);
-  const rule = { sender: currentEmail.sender, senderName: currentEmail.senderName, folderId, folderName, limit: keepLimit };
-  if (existingIdx >= 0) rules[existingIdx] = rule;
-  else rules.push(rule);
+  const rule = { sender: currentEmail.sender, senderName: currentEmail.senderName, folderId, folderName };
+  if (existingIdx >= 0) rules[existingIdx] = rule; else rules.push(rule);
   localStorage.setItem('nlm_rules', JSON.stringify(rules));
 
-  // E-Mail verschieben
-  moveCurrentEmail(folderId, folderName, () => {
-    // Alte E-Mails bereinigen
-    cleanupOldEmails(currentEmail.sender, folderId, keepLimit);
-    renderRules();
-    showToast(`Verschoben nach "${folderName}" · Max ${keepLimit} behalten ✦`, 'success');
-    document.getElementById('applyBtn').disabled = true;
+  document.getElementById('applyBtn').disabled = true;
+  showToast(`Verschiebe alle Mails von "${currentEmail.senderName}"…`, 'success');
+
+  // Aktuelle Mail verschieben, danach alle weiteren aus dem Posteingang
+  moveCurrentEmail(folderId, () => {
+    moveAllFromSender(currentEmail.sender, folderId, count => {
+      renderRules();
+      const total = 1 + count;
+      showToast(`${total} Mail${total !== 1 ? 's' : ''} nach "${folderName}" verschoben ✦`, 'success');
+    });
   });
 }
 
-function moveCurrentEmail(folderId, folderName, callback) {
+function moveCurrentEmail(folderId, callback) {
   const itemId = Office.context.mailbox.item.itemId;
   if (!itemId) { callback(); return; }
 
@@ -1015,22 +1044,20 @@ function moveCurrentEmail(folderId, folderName, callback) {
   </soap:Body>
 </soap:Envelope>`;
 
-  Office.context.mailbox.makeEwsRequestAsync(ews, function(result) {
-    callback();
-  });
+  Office.context.mailbox.makeEwsRequestAsync(ews, () => callback());
 }
 
-function cleanupOldEmails(sender, folderId, keepCount) {
-  // EWS: Suche alle E-Mails vom Absender im Zielordner
-  const ews = `<?xml version="1.0" encoding="utf-8"?>
+// Find all remaining emails from sender in inbox and move them in batches
+function moveAllFromSender(sender, folderId, callback) {
+  const findEws = `<?xml version="1.0" encoding="utf-8"?>
 <soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"
                xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types"
                xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages">
   <soap:Body>
     <m:FindItem Traversal="Shallow">
-      <m:ItemShape><t:BaseShape>IdOnly</t:BaseShape><t:AdditionalProperties><t:FieldURI FieldURI="message:From"/><t:FieldURI FieldURI="item:DateTimeReceived"/></t:AdditionalProperties></m:ItemShape>
-      <m:SortOrder><t:FieldOrder Order="Descending"><t:FieldURI FieldURI="item:DateTimeReceived"/></t:FieldOrder></m:SortOrder>
-      <m:ParentFolderIds><t:FolderId Id="${folderId}"/></m:ParentFolderIds>
+      <m:ItemShape><t:BaseShape>IdOnly</t:BaseShape></m:ItemShape>
+      <m:IndexedPageItemView MaxEntriesReturned="500" Offset="0" BasePoint="Beginning"/>
+      <m:ParentFolderIds><t:DistinguishedFolderId Id="inbox"/></m:ParentFolderIds>
       <m:Restriction>
         <t:Contains ContainmentMode="Substring" ContainmentComparison="IgnoreCase">
           <t:FieldURI FieldURI="message:From"/>
@@ -1041,26 +1068,37 @@ function cleanupOldEmails(sender, folderId, keepCount) {
   </soap:Body>
 </soap:Envelope>`;
 
-  Office.context.mailbox.makeEwsRequestAsync(ews, function(result) {
-    if (result.status !== Office.AsyncResultStatus.Succeeded) return;
-    const parser = new DOMParser();
-    const doc = parser.parseFromString(result.value, 'text/xml');
-    const items = Array.from(doc.querySelectorAll('ItemId'));
-    const toDelete = items.slice(keepCount);
-    if (toDelete.length === 0) return;
+  Office.context.mailbox.makeEwsRequestAsync(findEws, function(result) {
+    if (result.status !== Office.AsyncResultStatus.Succeeded) { callback(0); return; }
 
-    const ids = toDelete.map(i => `<t:ItemId Id="${i.getAttribute('Id')}" ChangeKey="${i.getAttribute('ChangeKey')}"/>`).join('');
-    const deleteEws = `<?xml version="1.0" encoding="utf-8"?>
+    const doc   = new DOMParser().parseFromString(result.value, 'text/xml');
+    const items = Array.from(doc.querySelectorAll('ItemId'));
+    if (items.length === 0) { callback(0); return; }
+
+    let moved = 0;
+    const batches = [];
+    for (let i = 0; i < items.length; i += 100) batches.push(items.slice(i, i + 100));
+
+    batches.forEach(batch => {
+      const ids = batch.map(i =>
+        `<t:ItemId Id="${i.getAttribute('Id')}" ChangeKey="${i.getAttribute('ChangeKey')}"/>`
+      ).join('');
+      const moveEws = `<?xml version="1.0" encoding="utf-8"?>
 <soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"
                xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types"
                xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages">
   <soap:Body>
-    <m:DeleteItem DeleteType="MoveToDeletedItems">
+    <m:MoveItem>
+      <m:ToFolderId><t:FolderId Id="${folderId}"/></m:ToFolderId>
       <m:ItemIds>${ids}</m:ItemIds>
-    </m:DeleteItem>
+    </m:MoveItem>
   </soap:Body>
 </soap:Envelope>`;
-    Office.context.mailbox.makeEwsRequestAsync(deleteEws, function() {});
+      Office.context.mailbox.makeEwsRequestAsync(moveEws, () => {
+        moved += batch.length;
+        if (moved >= items.length) callback(items.length);
+      });
+    });
   });
 }
 
@@ -1077,7 +1115,6 @@ function renderRules() {
         <div class="rule-item">
           <div class="rule-sender">${r.senderName || r.sender}</div>
           <div class="rule-folder">→ ${r.folderName}</div>
-          <div class="rule-limit">max ${r.limit}</div>
           <button class="rule-delete" onclick="deleteRule(${i})" title="Regel löschen">×</button>
         </div>
       `).join('');
