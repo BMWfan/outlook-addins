@@ -1085,53 +1085,30 @@ function applyRule() {
   localStorage.setItem('nlm_rules', JSON.stringify(rules));
 
   document.getElementById('applyBtn').disabled = true;
-  showToast(`Verschiebe alle Mails von "${currentEmail.senderName}"…`, 'success');
+  showToast(`Verschiebe Mails von "${currentEmail.senderName}"…`, 'success');
 
-  // Aktuelle Mail verschieben, danach alle weiteren
-  moveCurrentEmail(folderId, (currentMoved) => {
-    moveAllFromSender(currentEmail.sender, folderId, (moved, skipped) => {
-      renderRules();
-      const total = (currentMoved ? 1 : 0) + moved;
-      if (total === 0) {
-        showToast('Keine Mails konnten verschoben werden. Siehe Konsole (F12).', 'error');
-      } else {
-        const skipNote = skipped > 0 ? ` · ${skipped} nicht-Newsletter belassen` : '';
-        showToast(`${total} Mail${total !== 1 ? 's' : ''} nach "${folderName}" verschoben${skipNote} ✦`, 'success');
-      }
-    });
+  // Pass the current email's internet message ID so moveAllFromSender can:
+  // 1. always include it (even if newsletter headers are missing)
+  // 2. move it LAST to avoid Outlook reloading the task pane mid-operation
+  const currentIntMsgId = Office.context.mailbox.item.internetMessageId || '';
+  moveAllFromSender(currentEmail.sender, folderId, currentIntMsgId, (moved, skipped) => {
+    renderRules();
+    if (moved === 0) {
+      showToast('Keine Mails konnten verschoben werden. Siehe Konsole (F12).', 'error');
+    } else {
+      const skipNote = skipped > 0 ? ` · ${skipped} persönl. belassen` : '';
+      showToast(`${moved} Mail${moved !== 1 ? 's' : ''} nach "${folderName}" verschoben${skipNote} ✦`, 'success');
+    }
   });
 }
 
-async function moveCurrentEmail(folderId, callback) {
-  try {
-    // Office item IDs are EWS-format and break Graph URL routing.
-    // Use the RFC 2822 internetMessageId to look up the real Graph ID instead.
-    const internetMsgId = Office.context.mailbox.item.internetMessageId;
-    if (!internetMsgId) { callback(false); return; }
-
-    const filter  = `internetMessageId eq '${internetMsgId.replace(/'/g, "''")}'`;
-    const found   = await graphFetch(`/me/messages?$filter=${encodeURIComponent(filter)}&$select=id&$top=1`);
-    const graphId = (found.value || [])[0]?.id;
-    if (!graphId) { callback(false); return; }
-
-    await graphFetch(`/me/messages/${encodeURIComponent(graphId)}/move`, {
-      method: 'POST',
-      body: JSON.stringify({ destinationId: folderId })
-    });
-    console.log('[NLM] moveCurrentEmail OK');
-    callback(true);
-  } catch (e) {
-    console.error('[NLM] moveCurrentEmail failed:', e.message);
-    showToast('Verschieben fehlgeschlagen: ' + e.message, 'error');
-    callback(false);
-  }
-}
-
-// Move only newsletter emails from this sender (not personal emails with same address)
-async function moveAllFromSender(sender, folderId, callback) {
+// Move newsletter emails from this sender. currentIntMsgId is always included and moved last
+// so that Outlook's task-pane reload (triggered by moving the viewed email) doesn't abort
+// the remaining moves.
+async function moveAllFromSender(sender, folderId, currentIntMsgId, callback) {
   try {
     const filter = `from/emailAddress/address eq '${sender.replace(/'/g, "''")}'`;
-    let url = `/me/messages?$filter=${encodeURIComponent(filter)}&$select=id,parentFolderId,subject,internetMessageHeaders&$top=100`;
+    let url = `/me/messages?$filter=${encodeURIComponent(filter)}&$select=id,parentFolderId,subject,internetMessageHeaders,internetMessageId&$top=100`;
     let all = [];
     while (url) {
       const data = await graphFetch(url);
@@ -1139,10 +1116,14 @@ async function moveAllFromSender(sender, folderId, callback) {
       url = data['@odata.nextLink'] || null;
     }
 
-    const candidates = all.filter(m => m.parentFolderId !== folderId);
-    const toMove     = candidates.filter(m => looksLikeNewsletter(m));
-    const skipped    = candidates.length - toMove.length;
-    console.log('[NLM] moveAllFromSender: found', all.length, '→ newsletter', toMove.length, 'skip', skipped);
+    const candidates  = all.filter(m => m.parentFolderId !== folderId);
+    const isCurrent   = m => m.internetMessageId === currentIntMsgId;
+    // Always include the currently viewed email; filter others by newsletter signals
+    const toMove      = candidates.filter(m => isCurrent(m) || looksLikeNewsletter(m));
+    const skipped     = candidates.filter(m => !isCurrent(m) && !looksLikeNewsletter(m)).length;
+    // Current email moves last — keeps task pane alive until all others are done
+    toMove.sort((a, b) => (isCurrent(a) ? 1 : 0) - (isCurrent(b) ? 1 : 0));
+    console.log('[NLM] moveAllFromSender: found', all.length, '→ move', toMove.length, 'skip', skipped);
 
     let moved = 0;
     for (const msg of toMove) {
