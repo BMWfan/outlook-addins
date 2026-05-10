@@ -1096,9 +1096,10 @@ function applyRule() {
   document.getElementById('applyBtn').disabled = true;
   showToast(`Verschiebe Mails von "${currentEmail.senderName}"…`, 'success');
 
-  // Pass the current email's internet message ID so moveAllFromSender can:
-  // 1. always include it (even if newsletter headers are missing)
-  // 2. move it LAST to avoid Outlook reloading the task pane mid-operation
+  // Create an Exchange Online server-side rule so future emails are moved automatically,
+  // even without the add-in open. Runs in background — doesn't block the bulk move.
+  createExchangeRule(currentEmail.sender, currentEmail.senderName, folderId);
+
   const currentIntMsgId = Office.context.mailbox.item.internetMessageId || '';
   moveAllFromSender(currentEmail.sender, folderId, currentIntMsgId, (moved, skipped) => {
     renderRules();
@@ -1106,9 +1107,34 @@ function applyRule() {
       showToast('Keine Mails konnten verschoben werden. Siehe Konsole (F12).', 'error');
     } else {
       const skipNote = skipped > 0 ? ` · ${skipped} persönl. belassen` : '';
-      showToast(`${moved} Mail${moved !== 1 ? 's' : ''} nach "${folderName}" verschoben${skipNote} ✦`, 'success');
+      showToast(`${moved} Mail${moved !== 1 ? 's' : ''} nach "${folderName}" verschoben${skipNote} · Automatik aktiv ✦`, 'success');
     }
   });
+}
+
+// Creates (or updates) an Exchange Online inbox rule for this sender so future
+// newsletter emails are moved automatically without the add-in being open.
+async function createExchangeRule(sender, senderName, folderId) {
+  const name = `NLM: ${senderName}`;
+  try {
+    const existing = await graphFetch('/me/mailFolders/inbox/messageRules?$select=id,displayName');
+    const dup      = (existing.value || []).find(r => r.displayName === name);
+    const body     = JSON.stringify({
+      displayName: name,
+      sequence:    100,
+      isEnabled:   true,
+      conditions:  { senderContains: [sender] },
+      actions:     { moveToFolder: folderId }
+    });
+    if (dup) {
+      await graphFetch(`/me/mailFolders/inbox/messageRules/${dup.id}`, { method: 'PATCH', body });
+    } else {
+      await graphFetch('/me/mailFolders/inbox/messageRules', { method: 'POST', body });
+    }
+    console.log('[NLM] Exchange rule saved:', name);
+  } catch (e) {
+    console.warn('[NLM] Exchange rule failed (non-fatal):', e.message);
+  }
 }
 
 // Move newsletter emails from this sender. currentIntMsgId is always included and moved last
