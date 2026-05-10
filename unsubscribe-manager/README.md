@@ -6,7 +6,7 @@ Outlook Web Add-in that scans your inbox and displays an overview of all newslet
 
 ## Features
 
-- **Scan** up to 500 emails from your inbox (configurable, default: 100)
+- **Scan your entire mailbox** — configurable count (enter `0` to scan everything), with an "All Folders" toggle to search beyond the inbox
 - **Groups senders by domain** — instead of seeing "Amazon" 20 times, you get one entry with a `20×` badge
 - **Detects `List-Unsubscribe` headers** automatically
 - **One-click unsubscribe** — opens the unsubscribe link in the browser, or opens a pre-filled compose window for `mailto:` links
@@ -17,9 +17,10 @@ Outlook Web Add-in that scans your inbox and displays an overview of all newslet
 
 1. Open any email in Outlook Web (the add-in works from any open email)
 2. Click **"Unsubscribe Manager"** in the toolbar
-3. Set the number of emails to scan (10–500) in the input field
-4. Click **"Scan"** — the add-in scans your inbox and groups all newsletter senders
-5. Click **"Abmelden"** next to any sender to unsubscribe
+3. Set the number of emails to scan in the input field — enter `0` to scan all emails without a limit
+4. Check **"Alle Ordner"** to search all folders (Inbox, Sent, Archive, …) instead of just the inbox
+5. Click **"Scan"** — the add-in scans and groups all newsletter senders
+6. Click **"Abmelden"** next to any sender to unsubscribe
 
 The list is sorted by email count (most frequent senders first). Once you click unsubscribe, the button changes to **"✓ Abbestellt"** for that session.
 
@@ -51,7 +52,8 @@ unsubscribe-manager/
 
 ## Technical details
 
-- Reads emails via **EWS** (`makeEwsRequestAsync`) with a fallback to the **Office REST API** for older Outlook hosts
+- Reads emails via **EWS** (`makeEwsRequestAsync`) with full pagination (500 items per page); falls back to the **Office REST API** (with `@odata.nextLink` paging) for older Outlook hosts
+- "All Folders" mode uses EWS `Traversal="Deep"` on `msgfolderroot`; the REST fallback switches from `me/mailFolders/inbox/messages` to `me/messages`
 - Extracts `List-Unsubscribe` headers; prefers HTTPS links over `mailto:` links
 - `mailto:` unsubscribe links open an Outlook compose window with subject "Unsubscribe" pre-filled
 - HTTPS unsubscribe links open in the default browser via `Office.context.ui.openBrowserWindow`

@@ -11,7 +11,7 @@ Office.onReady(info => {
 });
 
 // ── State ──────────────────────────────────────────────────
-let senderMap = {}; // domain/company → { name, email, count, unsubLink, unsubscribed }
+let senderMap = {};
 let scanning  = false;
 
 // ── UI Helpers ─────────────────────────────────────────────
@@ -39,20 +39,22 @@ async function startScan() {
   if (scanning) return;
   scanning = true;
 
-  const maxCount = parseInt(document.getElementById('scan-input').value, 10) || 100;
+  const maxCount   = parseInt(document.getElementById('scan-input').value, 10) || 0;
+  const allFolders = document.getElementById('all-folders').checked;
+
   document.getElementById('btn-scan').disabled = true;
   senderMap = {};
   renderList();
-  setStatus('Postfach wird gelesen…', 'scanning');
+  setStatus(allFolders ? 'Alle Ordner werden gelesen…' : 'Posteingang wird gelesen…', 'scanning');
   setProgress(0);
 
   try {
-    const messages = await fetchMessages(maxCount);
+    const messages = await fetchMessages(maxCount, allFolders);
     setStatus(`${messages.length} Mails geladen, analysiere…`, 'scanning');
-    setProgress(30);
+    setProgress(85);
     processSenders(messages);
-    setProgress(70);
-    await enrichWithAI(messages);
+    setProgress(92);
+    await enrichWithAI();
     setProgress(100);
     renderList();
     setStatus(`Fertig. ${Object.keys(senderMap).length} Sender gefunden.`, 'done');
@@ -68,34 +70,64 @@ async function startScan() {
   }
 }
 
-// ── Fetch messages via EWS REST ────────────────────────────
-function fetchMessages(count) {
-  return new Promise((resolve, reject) => {
-    // Use Office.context.mailbox.makeEwsRequestAsync to get items
-    const ewsRequest = buildFindItemRequest(count);
-    Office.context.mailbox.makeEwsRequestAsync(ewsRequest, result => {
-      if (result.status === Office.AsyncResultStatus.Failed) {
-        // Fallback: try REST
-        fetchMessagesRest(count).then(resolve).catch(reject);
-        return;
-      }
-      try {
-        const parsed = parseEwsResponse(result.value);
-        resolve(parsed);
-      } catch(e) {
-        fetchMessagesRest(count).then(resolve).catch(reject);
-      }
-    });
+// ── EWS promise wrapper ────────────────────────────────────
+function makeEwsRequest(xml) {
+  return new Promise(resolve => {
+    Office.context.mailbox.makeEwsRequestAsync(xml, result => resolve(result));
   });
 }
 
-function buildFindItemRequest(count) {
+// ── Fetch messages (EWS paginated, REST fallback) ──────────
+async function fetchMessages(maxCount, allFolders) {
+  const ewsResult = await fetchMessagesEws(maxCount, allFolders);
+  if (ewsResult !== null) return ewsResult;
+  return fetchMessagesRest(maxCount, allFolders);
+}
+
+async function fetchMessagesEws(maxCount, allFolders) {
+  const PAGE_SIZE = 500;
+  let offset  = 0;
+  let all     = [];
+  let hasMore = true;
+
+  while (hasMore) {
+    const batch = (maxCount > 0) ? Math.min(PAGE_SIZE, maxCount - all.length) : PAGE_SIZE;
+    if (batch <= 0) break;
+
+    const result = await makeEwsRequest(buildFindItemRequest(batch, offset, allFolders));
+    if (result.status === Office.AsyncResultStatus.Failed) return null;
+
+    let parsed;
+    try   { parsed = parseEwsResponse(result.value); }
+    catch { return null; }
+
+    all     = all.concat(parsed.messages);
+    hasMore = !parsed.includesLastItem && parsed.messages.length > 0;
+    offset += parsed.messages.length;
+
+    setStatus(`${all.length} Mails geladen…`, 'scanning');
+    const estimate = maxCount > 0 ? maxCount : Math.max(all.length, 1000);
+    setProgress(Math.min(80, (all.length / estimate) * 80));
+
+    if (maxCount > 0 && all.length >= maxCount) break;
+  }
+
+  return all;
+}
+
+// ── EWS request builder ────────────────────────────────────
+function buildFindItemRequest(count, offset, allFolders) {
+  const traversal = allFolders ? 'Deep' : 'Shallow';
+  const folder    = allFolders
+    ? '<t:DistinguishedFolderId Id="msgfolderroot"/>'
+    : '<t:DistinguishedFolderId Id="inbox"/>';
+
   return `<?xml version="1.0" encoding="utf-8"?>
 <soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"
                xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types"
                xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages">
   <soap:Body>
-    <m:FindItem Traversal="Shallow">
+    <m:FindItem Traversal="${traversal}">
       <m:ItemShape>
         <t:BaseShape>IdOnly</t:BaseShape>
         <t:AdditionalProperties>
@@ -104,81 +136,94 @@ function buildFindItemRequest(count) {
           <t:FieldURI FieldURI="message:InternetMessageHeaders"/>
         </t:AdditionalProperties>
       </m:ItemShape>
-      <m:IndexedPageItemView MaxEntriesReturned="${count}" Offset="0" BasePoint="Beginning"/>
-      <m:ParentFolderIds>
-        <t:DistinguishedFolderId Id="inbox"/>
-      </m:ParentFolderIds>
+      <m:IndexedPageItemView MaxEntriesReturned="${count}" Offset="${offset}" BasePoint="Beginning"/>
+      <m:ParentFolderIds>${folder}</m:ParentFolderIds>
     </m:FindItem>
   </soap:Body>
 </soap:Envelope>`;
 }
 
+// ── EWS response parser ────────────────────────────────────
 function parseEwsResponse(xmlString) {
-  const parser = new DOMParser();
-  const xml    = parser.parseFromString(xmlString, 'text/xml');
-  const items  = xml.querySelectorAll('Message');
-  const result = [];
+  const parser    = new DOMParser();
+  const xml       = parser.parseFromString(xmlString, 'text/xml');
+  const rootFolder = xml.querySelector('RootFolder');
 
-  items.forEach(item => {
+  const includesLastItem = rootFolder
+    ? rootFolder.getAttribute('IncludesLastItemInRange') === 'true'
+    : true;
+
+  const messages = [];
+  xml.querySelectorAll('Message').forEach(item => {
     const fromName  = item.querySelector('Name')?.textContent || '';
     const fromEmail = item.querySelector('EmailAddress')?.textContent || '';
     const subject   = item.querySelector('Subject')?.textContent || '';
-    const headers   = item.querySelectorAll('InternetMessageHeader');
 
     let unsubLink = '';
-    headers.forEach(h => {
+    item.querySelectorAll('InternetMessageHeader').forEach(h => {
       if (h.getAttribute('HeaderName')?.toLowerCase() === 'list-unsubscribe') {
-        const val = h.textContent;
-        // prefer https link
-        const https = val.match(/<(https?:\/\/[^>]+)>/)?.[1];
+        const val    = h.textContent;
+        const https  = val.match(/<(https?:\/\/[^>]+)>/)?.[1];
         const mailto = val.match(/<(mailto:[^>]+)>/)?.[1];
         unsubLink = https || mailto || '';
       }
     });
 
-    if (fromEmail) {
-      result.push({ fromName, fromEmail, subject, unsubLink });
-    }
+    if (fromEmail) messages.push({ fromName, fromEmail, subject, unsubLink });
   });
 
-  return result;
+  return { messages, includesLastItem };
 }
 
-// Fallback: Office REST (older hosts)
-async function fetchMessagesRest(count) {
+// ── REST fallback (paginated via @odata.nextLink) ──────────
+async function fetchMessagesRest(maxCount, allFolders) {
   return new Promise((resolve, reject) => {
     Office.context.mailbox.getCallbackTokenAsync({ isRest: true }, async tokenResult => {
       if (tokenResult.status !== Office.AsyncResultStatus.Succeeded) {
         reject(new Error('Token nicht verfügbar'));
         return;
       }
+
       const token    = tokenResult.value;
       const endpoint = Office.context.mailbox.restUrl;
-      const url      = `${endpoint}/v2.0/me/mailFolders/inbox/messages` +
-                       `?$top=${count}&$select=from,subject,internetMessageHeaders&$orderby=receivedDateTime desc`;
+      const base     = allFolders
+        ? `${endpoint}/v2.0/me/messages`
+        : `${endpoint}/v2.0/me/mailFolders/inbox/messages`;
+
+      let all = [];
+      let url = `${base}?$top=100&$select=from,subject,internetMessageHeaders&$orderby=receivedDateTime desc`;
+
       try {
-        const resp = await fetch(url, {
-          headers: { Authorization: `Bearer ${token}` }
-        });
-        if (!resp.ok) throw new Error(`REST ${resp.status}`);
-        const data = await resp.json();
-        const msgs = (data.value || []).map(m => {
-          const headers = m.internetMessageHeaders || [];
-          const unsubH  = headers.find(h => h.name.toLowerCase() === 'list-unsubscribe');
-          let unsubLink = '';
-          if (unsubH) {
-            const https  = unsubH.value.match(/<(https?:\/\/[^>]+)>/)?.[1];
-            const mailto = unsubH.value.match(/<(mailto:[^>]+)>/)?.[1];
-            unsubLink    = https || mailto || '';
-          }
-          return {
-            fromName:  m.from?.emailAddress?.name  || '',
-            fromEmail: m.from?.emailAddress?.address || '',
-            subject:   m.subject || '',
-            unsubLink
-          };
-        });
-        resolve(msgs);
+        while (url) {
+          if (maxCount > 0 && all.length >= maxCount) break;
+
+          const resp = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+          if (!resp.ok) throw new Error(`REST ${resp.status}`);
+
+          const data = await resp.json();
+          const msgs = (data.value || []).map(m => {
+            const headers = m.internetMessageHeaders || [];
+            const unsubH  = headers.find(h => h.name.toLowerCase() === 'list-unsubscribe');
+            let unsubLink = '';
+            if (unsubH) {
+              const https  = unsubH.value.match(/<(https?:\/\/[^>]+)>/)?.[1];
+              const mailto = unsubH.value.match(/<(mailto:[^>]+)>/)?.[1];
+              unsubLink    = https || mailto || '';
+            }
+            return {
+              fromName:  m.from?.emailAddress?.name    || '',
+              fromEmail: m.from?.emailAddress?.address || '',
+              subject:   m.subject || '',
+              unsubLink
+            };
+          });
+
+          all = all.concat(msgs);
+          url = data['@odata.nextLink'] || null;
+          setStatus(`${all.length} Mails geladen…`, 'scanning');
+        }
+
+        resolve(maxCount > 0 ? all.slice(0, maxCount) : all);
       } catch(e) { reject(e); }
     });
   });
@@ -189,21 +234,18 @@ function processSenders(messages) {
   messages.forEach(msg => {
     const email  = msg.fromEmail.toLowerCase();
     const domain = extractDomain(email);
-    if (!domain) return;
-
-    // skip own domain / exchange system mails
-    if (isSystemSender(email)) return;
+    if (!domain || isSystemSender(email)) return;
 
     if (!senderMap[domain]) {
       senderMap[domain] = {
-        key:         domain,
-        displayName: msg.fromName || domain,
-        email:       email,
-        domain:      domain,
-        count:       0,
-        unsubLink:   '',
+        key:          domain,
+        displayName:  msg.fromName || domain,
+        email,
+        domain,
+        count:        0,
+        unsubLink:    '',
         unsubscribed: false,
-        subjects:    []
+        subjects:     []
       };
     }
     senderMap[domain].count++;
@@ -213,7 +255,6 @@ function processSenders(messages) {
     if (senderMap[domain].subjects.length < 3) {
       senderMap[domain].subjects.push(msg.subject);
     }
-    // prefer longer/cleaner display names
     if (msg.fromName && msg.fromName.length > senderMap[domain].displayName.length) {
       senderMap[domain].displayName = msg.fromName;
     }
@@ -231,8 +272,7 @@ function isSystemSender(email) {
 }
 
 // ── AI enrichment via Anthropic API ───────────────────────
-async function enrichWithAI(messages) {
-  // Build a concise summary for Claude to label senders nicely
+async function enrichWithAI() {
   const raw = Object.values(senderMap).map(s => ({
     domain:      s.domain,
     sample_name: s.displayName,
@@ -241,14 +281,14 @@ async function enrichWithAI(messages) {
 
   if (raw.length === 0) return;
 
-  const prompt = `Du erhältst eine Liste von E-Mail-Absendern aus einem Postfach.
-Deine Aufgabe: Gib für jeden Eintrag einen sauberen, kurzen deutschen Anzeigenamen zurück (max 30 Zeichen).
-Nutze den sample_name oder leite ihn aus der Domain ab. Keine technischen Kürzel, echte Firmennamen bevorzugen.
+  const prompt = `You receive a list of email senders from a mailbox.
+Your task: return a clean, short display name (max 30 chars) for each entry.
+Use the sample_name or derive it from the domain. Prefer real company names over technical strings.
 
-Antworte NUR als JSON-Array (kein Markdown, keine Erklärung):
-[{"domain":"example.com","label":"Beispiel GmbH"}, ...]
+Reply ONLY as a JSON array (no markdown, no explanation):
+[{"domain":"example.com","label":"Example Inc"}, ...]
 
-Eingabe:
+Input:
 ${JSON.stringify(raw)}`;
 
   try {
@@ -262,9 +302,9 @@ ${JSON.stringify(raw)}`;
       })
     });
 
-    if (!resp.ok) return; // fail silently, display names already set
-    const data = await resp.json();
-    const text = data.content?.find(b => b.type === 'text')?.text || '';
+    if (!resp.ok) return;
+    const data   = await resp.json();
+    const text   = data.content?.find(b => b.type === 'text')?.text || '';
     const labels = JSON.parse(text.replace(/```json|```/g, '').trim());
 
     labels.forEach(item => {
@@ -273,7 +313,7 @@ ${JSON.stringify(raw)}`;
       }
     });
   } catch(_) {
-    // AI enrichment optional – ignore errors
+    // AI enrichment is optional – ignore errors
   }
 }
 
@@ -291,7 +331,6 @@ function renderList() {
     return;
   }
 
-  // Sort by count desc
   entries.sort((a, b) => b.count - a.count);
 
   container.innerHTML = entries.map(s => `
@@ -305,7 +344,6 @@ function renderList() {
     </div>
   `).join('');
 
-  // Attach button listeners
   entries.forEach(s => {
     const btn = document.querySelector(`#row-${CSS.escape(s.domain)} .btn-unsub`);
     if (btn && !s.unsubscribed) {
@@ -326,17 +364,14 @@ function renderUnsubButton(s) {
 
 function handleUnsub(sender) {
   if (sender.unsubLink.startsWith('mailto:')) {
-    // Open compose window for mailto unsubscribe
     Office.context.mailbox.displayNewMessageForm({
       toRecipients: [{ emailAddress: sender.unsubLink.replace('mailto:', '').split('?')[0] }],
       subject:      'Unsubscribe',
       htmlBody:     'Please unsubscribe me from your mailing list.'
     });
   } else {
-    // Open link in browser
     Office.context.ui.openBrowserWindow(sender.unsubLink);
   }
-  // Mark as done
   senderMap[sender.domain].unsubscribed = true;
   renderList();
 }
@@ -344,14 +379,14 @@ function handleUnsub(sender) {
 function clearResults() {
   senderMap = {};
   renderList();
-  setStatus('Bereit. Anzahl wählen und scannen.', '');
+  setStatus('Ready. Set count and scan.', '');
   setSummary(0);
 }
 
 function esc(str) {
   return String(str)
-    .replace(/&/g,'&amp;')
-    .replace(/</g,'&lt;')
-    .replace(/>/g,'&gt;')
-    .replace(/"/g,'&quot;');
+    .replace(/&/g, '&amp;')
+    .replace(/</g,  '&lt;')
+    .replace(/>/g,  '&gt;')
+    .replace(/"/g,  '&quot;');
 }

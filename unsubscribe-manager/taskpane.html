@@ -104,6 +104,25 @@
       border: 1px solid var(--border);
     }
 
+    #all-label {
+      display: flex;
+      align-items: center;
+      gap: 3px;
+      color: var(--muted);
+      font-size: 10px;
+      white-space: nowrap;
+      cursor: pointer;
+      user-select: none;
+      flex-shrink: 0;
+    }
+    #all-label input[type="checkbox"] {
+      accent-color: var(--accent);
+      width: 11px;
+      height: 11px;
+      margin: 0;
+      cursor: pointer;
+    }
+
     /* STATUS BAR */
     #status {
       font-size: 10px;
@@ -232,8 +251,9 @@
 </div>
 
 <div id="controls">
-  <input id="scan-input" type="number" min="10" max="500" value="100" placeholder="Anzahl Mails"/>
-  <button id="btn-scan">⚡ Scannen</button>
+  <input id="scan-input" type="number" min="10" value="500" placeholder="Anzahl (0 = alle)"/>
+  <label id="all-label"><input type="checkbox" id="all-folders"/> Alle Ordner</label>
+  <button id="btn-scan">⚡ Scan</button>
   <button id="btn-clear">✕</button>
 </div>
 
