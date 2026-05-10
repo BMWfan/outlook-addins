@@ -1103,14 +1103,18 @@ function applyRule() {
 }
 
 async function moveCurrentEmail(folderId, callback) {
-  const ewsId = Office.context.mailbox.item.itemId;
-  if (!ewsId) { showToast('Fehler: Item-ID nicht verfügbar.', 'error'); callback(false); return; }
-
-  // Office gives an EWS-format ID; Graph API needs the REST format
-  const itemId = Office.context.mailbox.convertToRestId(ewsId, Office.MailboxEnums.RestVersion.v2_0);
-
   try {
-    await graphFetch(`/me/messages/${encodeURIComponent(itemId)}/move`, {
+    // Office item IDs are EWS-format and break Graph URL routing.
+    // Use the RFC 2822 internetMessageId to look up the real Graph ID instead.
+    const internetMsgId = Office.context.mailbox.item.internetMessageId;
+    if (!internetMsgId) { callback(false); return; }
+
+    const filter  = `internetMessageId eq '${internetMsgId.replace(/'/g, "''")}'`;
+    const found   = await graphFetch(`/me/messages?$filter=${encodeURIComponent(filter)}&$select=id&$top=1`);
+    const graphId = (found.value || [])[0]?.id;
+    if (!graphId) { callback(false); return; }
+
+    await graphFetch(`/me/messages/${encodeURIComponent(graphId)}/move`, {
       method: 'POST',
       body: JSON.stringify({ destinationId: folderId })
     });
