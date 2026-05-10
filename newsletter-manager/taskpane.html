@@ -440,6 +440,21 @@
     .override-type.nl { color: var(--green); border-color: rgba(74,222,128,0.3); background: var(--green-dim); }
     .override-type.not-nl { color: var(--red); border-color: rgba(248,113,113,0.3); background: var(--red-dim); }
 
+    /* Naive Bayes section */
+    #nbSection { padding: 0 14px 10px; }
+    .nb-progress { font-size: 10px; color: var(--muted); font-family: var(--font-mono); }
+    .nb-hint { opacity: 0.6; }
+    .nb-row { display: flex; align-items: center; gap: 8px; margin-bottom: 5px; }
+    .nb-label { font-size: 10px; font-weight: 500; color: var(--muted); white-space: nowrap; }
+    .nb-bar-wrap { flex: 1; height: 4px; background: var(--surface2); border-radius: 2px; overflow: hidden; }
+    .nb-bar-fill { height: 100%; border-radius: 2px; transition: width 0.4s; }
+    .nb-pct { font-family: var(--font-mono); font-size: 10px; font-weight: 500; white-space: nowrap; }
+    .nb-words { display: flex; flex-wrap: wrap; gap: 4px; }
+    .nb-word { font-family: var(--font-mono); font-size: 9px; padding: 2px 6px; border-radius: 4px; border: 1px solid var(--border); }
+    .nb-word.nl    { color: var(--green); background: var(--green-dim); border-color: rgba(74,222,128,0.3); }
+    .nb-word.not-nl { color: var(--red);  background: var(--red-dim);   border-color: rgba(248,113,113,0.3); }
+    .nb-sep { color: var(--border); }
+
     /* Scrollbar */
     ::-webkit-scrollbar { width: 4px; }
     ::-webkit-scrollbar-track { background: transparent; }
@@ -479,6 +494,7 @@
       </div>
     </div>
     <div class="signals" id="signalsList"></div>
+    <div id="nbSection" style="display:none;"></div>
     <div class="action-row" id="actionRow">
       <button class="btn btn-confirm" onclick="confirmNewsletter()">✓ Ja, Newsletter</button>
       <button class="btn btn-deny" onclick="denyNewsletter()">✗ Kein Newsletter</button>
@@ -553,10 +569,11 @@
 //  STATE
 // ══════════════════════════════════════════════════
 let currentEmail = { sender: '', senderName: '', subject: '', body: '' };
+let currentWords = [];
 let isNewsletter = false;
-let keepLimit = 5;
-let folders = [];
-let rules    = JSON.parse(localStorage.getItem('nlm_rules')     || '[]');
+let keepLimit    = 5;
+let folders      = [];
+let rules     = JSON.parse(localStorage.getItem('nlm_rules')     || '[]');
 let overrides = JSON.parse(localStorage.getItem('nlm_overrides') || '{}');
 
 // Newsletter-Erkennungs-Signale
@@ -571,6 +588,127 @@ const NEWSLETTER_SIGNALS = [
 ];
 
 // ══════════════════════════════════════════════════
+//  NAIVE BAYES TEXT CLASSIFIER
+// ══════════════════════════════════════════════════
+const STOP_WORDS = new Set([
+  'der','die','das','ein','eine','und','oder','aber','in','im','ist','sind',
+  'hat','haben','war','auf','für','von','zu','mit','an','bei','nach','aus',
+  'über','unter','vor','durch','um','sie','er','es','ich','wir','ihr','du',
+  'mir','mich','sich','auch','noch','nicht','so','wie','als','wenn','dass',
+  'ob','werden','wird','wurde','können','kann','muss','müssen','soll','sollen',
+  'sein','ihre','ihrem','ihren','seinen','seiner','seinem','dieser','diese',
+  'diesem','diesen','jetzt','hier','da','dort','dann','doch','nur','alle',
+  'alles','mehr','sehr','schon','wieder','immer','heute',
+  'the','a','an','and','or','but','on','at','to','for','of','is','are','was',
+  'be','by','from','with','as','this','that','it','we','you','he','she','they',
+  'have','has','had','will','can','not','your','our','their','its','were','been',
+  'do','does','did','would','could','should','may','might',
+  'click','here','view','mailto','http','https','www','com','html','font',
+  'style','color','width','table','tbody','thead','nbsp',
+]);
+
+function extractWords(text) {
+  const clean = text.replace(/<[^>]+>/g, ' ').toLowerCase();
+  const words = clean.match(/[a-zäöüß]{3,}/g) || [];
+  return words.filter(w => !STOP_WORDS.has(w)).slice(0, 400);
+}
+
+function getNbState() {
+  return {
+    vocab:  JSON.parse(localStorage.getItem('nlm_vocab')        || '{}'),
+    totals: JSON.parse(localStorage.getItem('nlm_totals')       || '{"nl":0,"notNl":0}'),
+    counts: JSON.parse(localStorage.getItem('nlm_class_counts') || '{"nl":0,"notNl":0}'),
+  };
+}
+
+function saveNbState(vocab, totals, counts) {
+  localStorage.setItem('nlm_vocab',        JSON.stringify(vocab));
+  localStorage.setItem('nlm_totals',       JSON.stringify(totals));
+  localStorage.setItem('nlm_class_counts', JSON.stringify(counts));
+}
+
+function trainClassifier(words, isNl) {
+  const { vocab, totals, counts } = getNbState();
+  const cls  = isNl ? 'nl' : 'notNl';
+  const seen = new Set(words);
+  seen.forEach(word => {
+    if (!vocab[word]) vocab[word] = { nl: 0, notNl: 0 };
+    vocab[word][cls]++;
+  });
+  totals[cls] += seen.size;
+  counts[cls]++;
+  saveNbState(vocab, totals, counts);
+}
+
+function getNbResult(words) {
+  const { vocab, totals, counts } = getNbState();
+  const MIN = 5;
+  if (counts.nl < MIN || counts.notNl < MIN) {
+    return { ready: false, trainingNl: counts.nl, trainingNotNl: counts.notNl, needed: MIN };
+  }
+
+  const totalDocs = counts.nl + counts.notNl;
+  const vocabSize = Object.keys(vocab).length;
+  let logNl    = Math.log(counts.nl    / totalDocs);
+  let logNotNl = Math.log(counts.notNl / totalDocs);
+
+  const wordScores = [];
+  new Set(words).forEach(word => {
+    const w      = vocab[word] || { nl: 0, notNl: 0 };
+    const pNl    = (w.nl    + 1) / (totals.nl    + vocabSize);
+    const pNotNl = (w.notNl + 1) / (totals.notNl + vocabSize);
+    logNl    += Math.log(pNl);
+    logNotNl += Math.log(pNotNl);
+    wordScores.push({ word, diff: Math.log(pNl) - Math.log(pNotNl) });
+  });
+
+  const maxLog = Math.max(logNl, logNotNl);
+  const eNl    = Math.exp(logNl    - maxLog);
+  const eNotNl = Math.exp(logNotNl - maxLog);
+  const score  = eNl / (eNl + eNotNl);
+
+  wordScores.sort((a, b) => b.diff - a.diff);
+  return {
+    ready:         true,
+    score,
+    topNl:         wordScores.slice(0, 5).filter(w => w.diff > 0).map(w => w.word),
+    topNotNl:      wordScores.slice(-5).reverse().filter(w => w.diff < 0).map(w => w.word),
+    trainingNl:    counts.nl,
+    trainingNotNl: counts.notNl,
+  };
+}
+
+function renderNbSection(result) {
+  const section = document.getElementById('nbSection');
+  if (!result) { section.style.display = 'none'; return; }
+  section.style.display = 'block';
+
+  if (!result.ready) {
+    const needed = result.needed - Math.min(result.trainingNl, result.trainingNotNl);
+    section.innerHTML = `<div class="nb-progress">🧠 Text-KI noch nicht aktiv &mdash; noch <strong>${needed}</strong> Feedbacks nötig <span class="nb-hint">(${result.trainingNl}✦ ${result.trainingNotNl}○)</span></div>`;
+    return;
+  }
+
+  const pct   = Math.round(result.score * 100);
+  const isNl  = result.score > 0.5;
+  const color = isNl ? 'var(--green)' : 'var(--red)';
+  const label = isNl ? `${pct}% Newsletter` : `${100 - pct}% kein Newsletter`;
+
+  const nlW    = result.topNl.map(w    => `<span class="nb-word nl">${w}</span>`).join('');
+  const notNlW = result.topNotNl.map(w => `<span class="nb-word not-nl">${w}</span>`).join('');
+  const words  = [nlW, notNlW].filter(Boolean).join('<span class="nb-sep"> · </span>');
+
+  section.innerHTML = `
+    <div class="nb-row">
+      <span class="nb-label">🧠 Text-KI</span>
+      <div class="nb-bar-wrap"><div class="nb-bar-fill" style="width:${pct}%;background:${color}"></div></div>
+      <span class="nb-pct" style="color:${color}">${label}</span>
+    </div>
+    ${words ? `<div class="nb-words">${words}</div>` : ''}
+  `;
+}
+
+// ══════════════════════════════════════════════════
 //  OFFICE INIT
 // ══════════════════════════════════════════════════
 Office.onReady(function(info) {
@@ -582,18 +720,16 @@ Office.onReady(function(info) {
 
 function loadCurrentEmail() {
   const item = Office.context.mailbox.item;
-
-  currentEmail.subject = item.subject || '';
-  currentEmail.sender = item.from?.emailAddress || '';
+  currentEmail.subject    = item.subject || '';
+  currentEmail.sender     = item.from?.emailAddress || '';
   currentEmail.senderName = item.from?.displayName || currentEmail.sender;
 
-  // Body laden für Signale
   item.body.getAsync(Office.CoercionType.Html, function(result) {
     currentEmail.body = result.value || '';
+    currentWords = extractWords(currentEmail.subject + ' ' + currentEmail.body);
     analyzeEmail();
   });
 
-  // Ordner laden
   loadFolders();
 }
 
@@ -623,7 +759,7 @@ function analyzeEmail() {
     `;
     document.getElementById('signalsList').innerHTML =
       '<span class="signal">Klassifikation aus deinem Feedback</span>';
-
+    document.getElementById('nbSection').style.display = 'none';
     document.getElementById('actionRow').style.display = 'none';
     if (isNewsletter) {
       document.getElementById('configCard').style.display = 'block';
@@ -632,7 +768,7 @@ function analyzeEmail() {
     return;
   }
 
-  // Signal analysis
+  // Rule-based signal analysis
   const body    = currentEmail.body.toLowerCase();
   const subject = currentEmail.subject.toLowerCase();
   const sender  = currentEmail.sender.toLowerCase();
@@ -646,9 +782,17 @@ function analyzeEmail() {
     noreply:            sender.includes('noreply') || sender.includes('no-reply') || sender.includes('donotreply'),
     html_only:          body.length > 2000 && body.includes('<table'),
   };
-
   const hitCount = Object.values(hits).filter(Boolean).length;
-  isNewsletter   = hitCount >= 2;
+
+  // Naive Bayes text scoring – overrides signals when confident
+  const nbResult = getNbResult(currentWords);
+  if (nbResult.ready) {
+    if      (nbResult.score > 0.72) isNewsletter = true;
+    else if (nbResult.score < 0.28) isNewsletter = false;
+    else                             isNewsletter = hitCount >= 2;
+  } else {
+    isNewsletter = hitCount >= 2;
+  }
 
   const badge = document.getElementById('detectionBadge');
   if (isNewsletter) {
@@ -660,6 +804,8 @@ function analyzeEmail() {
   document.getElementById('signalsList').innerHTML = NEWSLETTER_SIGNALS.map(s =>
     `<span class="signal ${hits[s.key] ? 'hit' : ''}">${hits[s.key] ? '✓' : '○'} ${s.label}</span>`
   ).join('');
+
+  renderNbSection(nbResult);
 }
 
 // ══════════════════════════════════════════════════
@@ -667,20 +813,21 @@ function analyzeEmail() {
 // ══════════════════════════════════════════════════
 function confirmNewsletter() {
   isNewsletter = true;
+  trainClassifier(currentWords, true);
   saveOverride(currentEmail.sender, currentEmail.senderName, 'newsletter');
-  document.getElementById('actionRow').style.display = 'none';
+  document.getElementById('actionRow').style.display  = 'none';
   document.getElementById('configCard').style.display = 'block';
   document.getElementById('applyBtn').style.display   = 'block';
-
-  const badge = document.getElementById('detectionBadge');
-  badge.innerHTML = `<span class="newsletter-badge">✦ Als Newsletter markiert</span>`;
+  document.getElementById('detectionBadge').innerHTML =
+    `<span class="newsletter-badge">✦ Als Newsletter markiert</span>`;
 }
 
 function denyNewsletter() {
+  trainClassifier(currentWords, false);
   saveOverride(currentEmail.sender, currentEmail.senderName, 'not-newsletter');
   document.getElementById('actionRow').style.display = 'none';
-  const badge = document.getElementById('detectionBadge');
-  badge.innerHTML = `<span class="not-newsletter-badge">○ Kein Newsletter</span>`;
+  document.getElementById('detectionBadge').innerHTML =
+    `<span class="not-newsletter-badge">○ Kein Newsletter</span>`;
   showToast('Gespeichert – wird künftig nicht mehr erkannt.', 'error');
 }
 
@@ -700,6 +847,7 @@ function forgetOverride() {
   // Re-fetch body and re-analyse
   Office.context.mailbox.item.body.getAsync(Office.CoercionType.Html, function(result) {
     currentEmail.body = result.value || '';
+    currentWords = extractWords(currentEmail.subject + ' ' + currentEmail.body);
     analyzeEmail();
   });
   renderRules();
