@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>Newsletter Manager</title>
   <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+  <script src="https://alcdn.msauth.net/browser/2.38.3/js/msal-browser.min.js"></script>
   <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet"/>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -875,19 +876,44 @@ function deleteOverride(senderKey) {
 }
 
 // ══════════════════════════════════════════════════
-//  EWS HELPER
+//  MSAL / GRAPH HELPER
 // ══════════════════════════════════════════════════
-function ewsRequest(xml) {
-  return new Promise(resolve => {
-    Office.context.mailbox.makeEwsRequestAsync(xml, r => resolve(r));
-  });
+const _msal = new msal.PublicClientApplication({
+  auth: {
+    clientId:    '0ad0c612-487d-4285-82b4-132de22f7642',
+    authority:   'https://login.microsoftonline.com/common',
+    redirectUri: 'https://bmwfan.github.io/outlook-addins/newsletter-manager/taskpane.html'
+  },
+  cache: { cacheLocation: 'localStorage', storeAuthStateInCookie: true }
+});
+const GRAPH_SCOPES = ['Mail.ReadWrite'];
+
+async function getGraphToken() {
+  await _msal.handleRedirectPromise().catch(() => {});
+  const accounts = _msal.getAllAccounts();
+  if (accounts.length > 0) {
+    try {
+      const r = await _msal.acquireTokenSilent({ scopes: GRAPH_SCOPES, account: accounts[0] });
+      return r.accessToken;
+    } catch(_) {}
+  }
+  const r = await _msal.acquireTokenPopup({ scopes: GRAPH_SCOPES });
+  return r.accessToken;
 }
 
-function ewsXmlOk(xmlStr) {
-  const doc = new DOMParser().parseFromString(xmlStr, 'text/xml');
-  const rc  = doc.querySelector('ResponseCode')?.textContent;
-  console.log('[NLM] EWS ResponseCode:', rc);
-  return { ok: rc === 'NoError', rc, doc };
+async function graphFetch(path, opts = {}) {
+  const token = await getGraphToken();
+  const url   = path.startsWith('http') ? path : `https://graph.microsoft.com/v1.0${path}`;
+  const resp  = await fetch(url, {
+    ...opts,
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', ...(opts.headers || {}) }
+  });
+  if (!resp.ok) {
+    let msg = `HTTP ${resp.status}`;
+    try { const e = await resp.json(); msg = e.error?.message || msg; } catch(_) {}
+    throw new Error(msg);
+  }
+  return resp.status === 204 ? null : resp.json();
 }
 
 // ══════════════════════════════════════════════════
@@ -895,84 +921,32 @@ function ewsXmlOk(xmlStr) {
 // ══════════════════════════════════════════════════
 async function loadFolders() {
   folders = [];
-
-  // 1. Get inbox folder ID via GetFolder
-  const r1 = await ewsRequest(`<?xml version="1.0" encoding="utf-8"?>
-<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"
-               xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types"
-               xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages">
-  <soap:Body>
-    <m:GetFolder>
-      <m:FolderShape>
-        <t:BaseShape>IdOnly</t:BaseShape>
-        <t:AdditionalProperties><t:FieldURI FieldURI="folder:DisplayName"/></t:AdditionalProperties>
-      </m:FolderShape>
-      <m:FolderIds><t:DistinguishedFolderId Id="inbox"/></m:FolderIds>
-    </m:GetFolder>
-  </soap:Body>
-</soap:Envelope>`);
-
-  if (r1.status !== Office.AsyncResultStatus.Succeeded) {
-    console.error('[NLM] GetFolder(inbox) request failed:', r1.error);
-    showToast('EWS nicht erreichbar: ' + (r1.error?.message || r1.error), 'error');
-    renderFolderSelect();
-    return;
-  }
-  console.log('[NLM] GetFolder(inbox):', r1.value.substring(0, 600));
-  const { ok: ok1, doc: d1 } = ewsXmlOk(r1.value);
-  if (ok1) {
-    const id   = d1.querySelector('FolderId')?.getAttribute('Id');
-    const name = d1.querySelector('DisplayName')?.textContent || 'Posteingang';
-    if (id) folders.push({ id, name });
-  }
-
-  // 2. Find direct subfolders of inbox
-  const r2 = await ewsRequest(`<?xml version="1.0" encoding="utf-8"?>
-<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"
-               xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types"
-               xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages">
-  <soap:Body>
-    <m:FindFolder Traversal="Shallow">
-      <m:FolderShape>
-        <t:BaseShape>IdOnly</t:BaseShape>
-        <t:AdditionalProperties><t:FieldURI FieldURI="folder:DisplayName"/></t:AdditionalProperties>
-      </m:FolderShape>
-      <m:ParentFolderIds><t:DistinguishedFolderId Id="inbox"/></m:ParentFolderIds>
-    </m:FindFolder>
-  </soap:Body>
-</soap:Envelope>`);
-
-  console.log('[NLM] FindFolder(inbox) status:', r2.status);
-  if (r2.status === Office.AsyncResultStatus.Succeeded) {
-    console.log('[NLM] FindFolder(inbox):', r2.value.substring(0, 600));
-    const { ok: ok2, doc: d2 } = ewsXmlOk(r2.value);
-    if (ok2) {
-      d2.querySelectorAll('Folder').forEach(f => {
-        const id   = f.querySelector('FolderId')?.getAttribute('Id');
-        const name = f.querySelector('DisplayName')?.textContent;
-        if (id && name) folders.push({ id, name });
-      });
+  try {
+    let url = '/me/mailFolders?$top=100&$select=id,displayName';
+    while (url) {
+      const data = await graphFetch(url);
+      folders = folders.concat((data.value || []).filter(f => f.displayName));
+      url = data['@odata.nextLink'] || null;
     }
-  } else {
-    console.error('[NLM] FindFolder(inbox) request failed:', r2.error);
+    folders.sort((a, b) => a.displayName.localeCompare(b.displayName));
+    console.log('[NLM] Graph folders:', folders.length);
+  } catch (e) {
+    console.error('[NLM] loadFolders failed:', e.message);
+    showToast('Ordner konnten nicht geladen werden: ' + e.message, 'error');
   }
-
-  folders.sort((a, b) => a.name.localeCompare(b.name));
-  console.log('[NLM] Folders:', folders.map(f => f.name));
-  if (folders.length === 0) showToast('Keine Ordner gefunden – F12-Konsole prüfen.', 'error');
   renderFolderSelect();
 }
 
 function renderFolderSelect() {
   const sel = document.getElementById('folderSelect');
   sel.innerHTML = folders.map(f =>
-    `<option value="${esc(f.id)}">${esc(f.displayName || f.name)}</option>`
+    `<option value="${esc(f.id)}">${esc(f.displayName)}</option>`
   ).join('');
 
   const hint = document.getElementById('defaultHint');
   if (defaultFolder && folders.find(f => f.id === defaultFolder.id)) {
     sel.value = defaultFolder.id;
-    hint.textContent = `📌 Standard: ${defaultFolder.name}`;
+    hint.textContent = `📌 Standard: ${defaultFolder.displayName || defaultFolder.name}`;
     hint.style.display = 'inline';
     document.getElementById('setAsDefault').checked = false;
   } else {
@@ -992,37 +966,20 @@ async function createFolder() {
   const name = document.getElementById('newFolderInput').value.trim();
   if (!name) return;
 
-  const result = await ewsRequest(`<?xml version="1.0" encoding="utf-8"?>
-<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"
-               xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types"
-               xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages">
-  <soap:Body>
-    <m:CreateFolder>
-      <m:ParentFolderId><t:DistinguishedFolderId Id="inbox"/></m:ParentFolderId>
-      <m:Folders><t:Folder><t:DisplayName>${name}</t:DisplayName></t:Folder></m:Folders>
-    </m:CreateFolder>
-  </soap:Body>
-</soap:Envelope>`);
-
-  console.log('[NLM] CreateFolder status:', result.status);
-  if (result.status !== Office.AsyncResultStatus.Succeeded) {
-    showToast('Ordner konnte nicht erstellt werden: ' + (result.error?.message || result.error), 'error');
-    return;
-  }
-  console.log('[NLM] CreateFolder response:', result.value.substring(0, 400));
-  const { ok, rc, doc } = ewsXmlOk(result.value);
-  if (!ok) { showToast(`Ordner-Fehler: ${rc}`, 'error'); return; }
-
-  const newId = doc.querySelector('FolderId')?.getAttribute('Id');
-  if (newId) {
-    folders.push({ id: newId, name });
-    folders.sort((a, b) => a.name.localeCompare(b.name));
+  try {
+    const data = await graphFetch('/me/mailFolders', {
+      method: 'POST',
+      body: JSON.stringify({ displayName: name })
+    });
+    folders.push({ id: data.id, displayName: name });
+    folders.sort((a, b) => a.displayName.localeCompare(b.displayName));
     renderFolderSelect();
-    document.getElementById('folderSelect').value = newId;
+    document.getElementById('folderSelect').value = data.id;
     document.getElementById('newFolderInput').value = '';
     document.getElementById('newFolderRow').classList.remove('visible');
     showToast(`Ordner "${name}" erstellt ✓`, 'success');
-    console.log('[NLM] Folder created:', newId, name);
+  } catch (e) {
+    showToast('Ordner-Fehler: ' + e.message, 'error');
   }
 }
 
@@ -1039,7 +996,8 @@ function changeLimit(delta) {
 // ══════════════════════════════════════════════════
 function applyRule() {
   const folderId   = document.getElementById('folderSelect').value;
-  const folderName = folders.find(f => f.id === folderId)?.name || folderId;
+  const folderObj  = folders.find(f => f.id === folderId);
+  const folderName = folderObj?.displayName || folderObj?.name || folderId;
 
   if (!folderId) { showToast('Bitte einen Ordner auswählen.', 'error'); return; }
 
@@ -1074,115 +1032,63 @@ function applyRule() {
 }
 
 async function moveCurrentEmail(folderId, callback) {
-  let itemId = Office.context.mailbox.item.itemId;
+  const itemId = Office.context.mailbox.item.itemId;
   if (!itemId) { showToast('Fehler: Item-ID nicht verfügbar.', 'error'); callback(false); return; }
 
-  try { itemId = Office.context.mailbox.convertToEwsId(itemId, Office.MailboxEnums.RestVersion.v2_0); } catch(_) {}
-  console.log('[NLM] MoveItem itemId:', itemId?.substring(0, 40), 'folderId:', folderId?.substring(0, 40));
-
-  const result = await ewsRequest(`<?xml version="1.0" encoding="utf-8"?>
-<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"
-               xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types"
-               xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages">
-  <soap:Body>
-    <m:MoveItem>
-      <m:ToFolderId><t:FolderId Id="${folderId}"/></m:ToFolderId>
-      <m:ItemIds><t:ItemId Id="${itemId}"/></m:ItemIds>
-    </m:MoveItem>
-  </soap:Body>
-</soap:Envelope>`);
-
-  console.log('[NLM] MoveItem status:', result.status);
-  if (result.status !== Office.AsyncResultStatus.Succeeded) {
-    console.error('[NLM] MoveItem failed:', result.error);
-    showToast('Verschieben fehlgeschlagen: ' + (result.error?.message || result.error), 'error');
-    callback(false); return;
+  try {
+    await graphFetch(`/me/messages/${encodeURIComponent(itemId)}/move`, {
+      method: 'POST',
+      body: JSON.stringify({ destinationId: folderId })
+    });
+    console.log('[NLM] moveCurrentEmail OK');
+    callback(true);
+  } catch (e) {
+    console.error('[NLM] moveCurrentEmail failed:', e.message);
+    showToast('Verschieben fehlgeschlagen: ' + e.message, 'error');
+    callback(false);
   }
-  console.log('[NLM] MoveItem response:', result.value.substring(0, 400));
-  const { ok, rc } = ewsXmlOk(result.value);
-  if (!ok) { showToast(`MoveItem Fehler: ${rc}`, 'error'); callback(false); return; }
-  callback(true);
 }
 
 // Find all newsletter emails from sender across all folders (except target) and move them
 async function moveAllFromSender(sender, folderId, callback) {
-  const findResult = await ewsRequest(`<?xml version="1.0" encoding="utf-8"?>
-<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"
-               xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types"
-               xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages">
-  <soap:Body>
-    <m:FindItem Traversal="Deep">
-      <m:ItemShape>
-        <t:BaseShape>IdOnly</t:BaseShape>
-        <t:AdditionalProperties>
-          <t:FieldURI FieldURI="item:ParentFolderId"/>
-          <t:FieldURI FieldURI="item:Subject"/>
-          <t:FieldURI FieldURI="message:InternetMessageHeaders"/>
-        </t:AdditionalProperties>
-      </m:ItemShape>
-      <m:IndexedPageItemView MaxEntriesReturned="500" Offset="0" BasePoint="Beginning"/>
-      <m:ParentFolderIds><t:DistinguishedFolderId Id="msgfolderroot"/></m:ParentFolderIds>
-      <m:Restriction>
-        <t:Contains ContainmentMode="Substring" ContainmentComparison="IgnoreCase">
-          <t:FieldURI FieldURI="message:From"/>
-          <t:Constant Value="${sender}"/>
-        </t:Contains>
-      </m:Restriction>
-    </m:FindItem>
-  </soap:Body>
-</soap:Envelope>`);
-
-  console.log('[NLM] FindItem status:', findResult.status);
-  if (findResult.status !== Office.AsyncResultStatus.Succeeded) {
-    console.error('[NLM] FindItem failed:', findResult.error);
-    callback(0, 0); return;
-  }
-  console.log('[NLM] FindItem response:', findResult.value.substring(0, 600));
-  const { ok, rc, doc } = ewsXmlOk(findResult.value);
-  if (!ok) { console.error('[NLM] FindItem EWS error:', rc); callback(0, 0); return; }
-
-  const allMessages = Array.from(doc.querySelectorAll('Message'))
-    .filter(m => m.querySelector('ParentFolderId')?.getAttribute('Id') !== folderId);
-  const skipped = allMessages.filter(m => !looksLikeNewsletter(m)).length;
-  const items   = allMessages.filter(m => looksLikeNewsletter(m))
-    .map(m => m.querySelector('ItemId')).filter(Boolean);
-
-  console.log('[NLM] moveAllFromSender: total', allMessages.length, 'toMove', items.length, 'skip', skipped);
-  if (items.length === 0) { callback(0, skipped); return; }
-
-  let moved = 0;
-  for (let i = 0; i < items.length; i += 100) {
-    const batch = items.slice(i, i + 100);
-    const ids   = batch.map(it =>
-      `<t:ItemId Id="${it.getAttribute('Id')}" ChangeKey="${it.getAttribute('ChangeKey')}"/>`
-    ).join('');
-    const mv = await ewsRequest(`<?xml version="1.0" encoding="utf-8"?>
-<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"
-               xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types"
-               xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages">
-  <soap:Body>
-    <m:MoveItem>
-      <m:ToFolderId><t:FolderId Id="${folderId}"/></m:ToFolderId>
-      <m:ItemIds>${ids}</m:ItemIds>
-    </m:MoveItem>
-  </soap:Body>
-</soap:Envelope>`);
-    console.log('[NLM] batch MoveItem status:', mv.status);
-    if (mv.status === Office.AsyncResultStatus.Succeeded) {
-      const { ok: mvOk, rc: mvRc } = ewsXmlOk(mv.value);
-      if (mvOk) moved += batch.length;
-      else console.error('[NLM] batch MoveItem error:', mvRc);
+  try {
+    const filter = `from/emailAddress/address eq '${sender.replace(/'/g, "''")}'`;
+    let url = `/me/messages?$filter=${encodeURIComponent(filter)}&$select=id,parentFolderId,subject,internetMessageHeaders&$top=100`;
+    let all = [];
+    while (url) {
+      const data = await graphFetch(url);
+      all = all.concat(data.value || []);
+      url = data['@odata.nextLink'] || null;
     }
+
+    const candidates = all.filter(m => m.parentFolderId !== folderId);
+    const skipped    = candidates.filter(m => !looksLikeNewsletter(m)).length;
+    const toMove     = candidates.filter(m => looksLikeNewsletter(m));
+    console.log('[NLM] moveAllFromSender: found', all.length, '→ move', toMove.length, 'skip', skipped);
+
+    let moved = 0;
+    for (const msg of toMove) {
+      try {
+        await graphFetch(`/me/messages/${encodeURIComponent(msg.id)}/move`, {
+          method: 'POST',
+          body: JSON.stringify({ destinationId: folderId })
+        });
+        moved++;
+      } catch (e) {
+        console.warn('[NLM] Could not move', msg.id, e.message);
+      }
+    }
+    callback(moved, skipped);
+  } catch (e) {
+    console.error('[NLM] moveAllFromSender failed:', e.message);
+    callback(0, 0);
   }
-  callback(moved, skipped);
 }
 
-function looksLikeNewsletter(msgEl) {
-  const headers = msgEl.querySelectorAll('InternetMessageHeader');
-  for (const h of headers) {
-    if (h.getAttribute('HeaderName')?.toLowerCase() === 'list-unsubscribe') return true;
-  }
-  const subject = msgEl.querySelector('Subject')?.textContent?.toLowerCase() || '';
+function looksLikeNewsletter(msg) {
+  const headers = msg.internetMessageHeaders || [];
+  if (headers.some(h => h.name?.toLowerCase() === 'list-unsubscribe')) return true;
+  const subject = (msg.subject || '').toLowerCase();
   const KW = ['newsletter','angebot','rabatt','deal','sale','promo','gutschein','aktion','spar','% off','% rabatt'];
   return KW.some(kw => subject.includes(kw));
 }
