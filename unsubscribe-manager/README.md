@@ -58,7 +58,7 @@ unsubscribe-manager/
 - `mailto:` unsubscribe links open an Outlook compose window with subject "Unsubscribe" pre-filled
 - HTTPS unsubscribe links open in the default browser via `Office.context.ui.openBrowserWindow`
 - System senders (mailer-daemon, postmaster, noreply@microsoft, bounce) are automatically excluded
-- The add-in is hosted at `https://bmwfan.github.io/unsubscribe-manager/` — the `manifest.xml` already points to this URL
+- The add-in is hosted at `https://bmwfan.github.io/outlook-addins/unsubscribe-manager/` — the `manifest.xml` already points to this URL
 
 ## Notes
 

@@ -11,9 +11,9 @@
   <DefaultLocale>de-DE</DefaultLocale>
   <DisplayName DefaultValue="Unsubscribe Manager"/>
   <Description DefaultValue="Scannt dein Postfach und erstellt eine Unsubscribe-Übersicht gruppiert nach Absender."/>
-  <IconUrl DefaultValue="https://bmwfan.github.io/unsubscribe-manager/icon64.png"/>
-  <HighResolutionIconUrl DefaultValue="https://bmwfan.github.io/unsubscribe-manager/icon128.png"/>
-  <SupportUrl DefaultValue="https://bmwfan.github.io/unsubscribe-manager/"/>
+  <IconUrl DefaultValue="https://bmwfan.github.io/outlook-addins/unsubscribe-manager/icon64.png"/>
+  <HighResolutionIconUrl DefaultValue="https://bmwfan.github.io/outlook-addins/unsubscribe-manager/icon128.png"/>
+  <SupportUrl DefaultValue="https://bmwfan.github.io/outlook-addins/unsubscribe-manager/"/>
 
   <AppDomains>
     <AppDomain>https://bmwfan.github.io</AppDomain>
@@ -32,7 +32,7 @@
   <FormSettings>
     <Form xsi:type="ItemRead">
       <DesktopSettings>
-        <SourceLocation DefaultValue="https://bmwfan.github.io/unsubscribe-manager/taskpane.html"/>
+        <SourceLocation DefaultValue="https://bmwfan.github.io/outlook-addins/unsubscribe-manager/taskpane.html"/>
         <RequestedHeight>250</RequestedHeight>
       </DesktopSettings>
     </Form>
@@ -83,13 +83,13 @@
 
     <Resources>
       <bt:Images>
-        <bt:Image id="icon16" DefaultValue="https://bmwfan.github.io/unsubscribe-manager/icon64.png"/>
-        <bt:Image id="icon32" DefaultValue="https://bmwfan.github.io/unsubscribe-manager/icon64.png"/>
-        <bt:Image id="icon80" DefaultValue="https://bmwfan.github.io/unsubscribe-manager/icon128.png"/>
+        <bt:Image id="icon16" DefaultValue="https://bmwfan.github.io/outlook-addins/unsubscribe-manager/icon64.png"/>
+        <bt:Image id="icon32" DefaultValue="https://bmwfan.github.io/outlook-addins/unsubscribe-manager/icon64.png"/>
+        <bt:Image id="icon80" DefaultValue="https://bmwfan.github.io/outlook-addins/unsubscribe-manager/icon128.png"/>
       </bt:Images>
       <bt:Urls>
-        <bt:Url id="functionFile" DefaultValue="https://bmwfan.github.io/unsubscribe-manager/taskpane.html"/>
-        <bt:Url id="readTaskPaneUrl" DefaultValue="https://bmwfan.github.io/unsubscribe-manager/taskpane.html"/>
+        <bt:Url id="functionFile" DefaultValue="https://bmwfan.github.io/outlook-addins/unsubscribe-manager/taskpane.html"/>
+        <bt:Url id="readTaskPaneUrl" DefaultValue="https://bmwfan.github.io/outlook-addins/unsubscribe-manager/taskpane.html"/>
       </bt:Urls>
       <bt:ShortStrings>
         <bt:String id="groupLabel" DefaultValue="Unsubscribe"/>

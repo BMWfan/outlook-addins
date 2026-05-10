@@ -1,6 +1,6 @@
 /* ============================================================
    Unsubscribe Manager – taskpane.js
-   Hosted at: https://bmwfan.github.io/unsubscribe-manager/
+   Hosted at: https://bmwfan.github.io/outlook-addins/unsubscribe-manager/
    ============================================================ */
 
 Office.onReady(info => {

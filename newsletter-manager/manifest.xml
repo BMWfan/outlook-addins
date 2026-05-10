@@ -6,9 +6,9 @@
   <DefaultLocale>en-US</DefaultLocale>
   <DisplayName DefaultValue="Newsletter Manager"/>
   <Description DefaultValue="Identifies newsletters and moves them to a folder, keeping only the desired number per sender."/>
-  <IconUrl DefaultValue="https://bmwfan.github.io/newsletter-manager/icon64.png"/>
-  <HighResolutionIconUrl DefaultValue="https://bmwfan.github.io/newsletter-manager/icon128.png"/>
-  <SupportUrl DefaultValue="https://bmwfan.github.io/newsletter-manager/"/>
+  <IconUrl DefaultValue="https://bmwfan.github.io/outlook-addins/newsletter-manager/icon64.png"/>
+  <HighResolutionIconUrl DefaultValue="https://bmwfan.github.io/outlook-addins/newsletter-manager/icon128.png"/>
+  <SupportUrl DefaultValue="https://bmwfan.github.io/outlook-addins/newsletter-manager/"/>
   <AppDomains>
     <AppDomain>https://bmwfan.github.io</AppDomain>
   </AppDomains>
@@ -23,7 +23,7 @@
   <FormSettings>
     <Form xsi:type="ItemRead">
       <DesktopSettings>
-        <SourceLocation DefaultValue="https://bmwfan.github.io/newsletter-manager/taskpane.html"/>
+        <SourceLocation DefaultValue="https://bmwfan.github.io/outlook-addins/newsletter-manager/taskpane.html"/>
         <RequestedHeight>250</RequestedHeight>
       </DesktopSettings>
     </Form>
@@ -70,13 +70,13 @@
     </Hosts>
     <Resources>
       <bt:Images>
-        <bt:Image id="icon16" DefaultValue="https://bmwfan.github.io/newsletter-manager/icon64.png"/>
-        <bt:Image id="icon32" DefaultValue="https://bmwfan.github.io/newsletter-manager/icon64.png"/>
-        <bt:Image id="icon80" DefaultValue="https://bmwfan.github.io/newsletter-manager/icon128.png"/>
+        <bt:Image id="icon16" DefaultValue="https://bmwfan.github.io/outlook-addins/newsletter-manager/icon64.png"/>
+        <bt:Image id="icon32" DefaultValue="https://bmwfan.github.io/outlook-addins/newsletter-manager/icon64.png"/>
+        <bt:Image id="icon80" DefaultValue="https://bmwfan.github.io/outlook-addins/newsletter-manager/icon128.png"/>
       </bt:Images>
       <bt:Urls>
-        <bt:Url id="functionFile" DefaultValue="https://bmwfan.github.io/newsletter-manager/taskpane.html"/>
-        <bt:Url id="readTaskPaneUrl" DefaultValue="https://bmwfan.github.io/newsletter-manager/taskpane.html"/>
+        <bt:Url id="functionFile" DefaultValue="https://bmwfan.github.io/outlook-addins/newsletter-manager/taskpane.html"/>
+        <bt:Url id="readTaskPaneUrl" DefaultValue="https://bmwfan.github.io/outlook-addins/newsletter-manager/taskpane.html"/>
       </bt:Urls>
       <bt:ShortStrings>
         <bt:String id="groupLabel" DefaultValue="Newsletter"/>
