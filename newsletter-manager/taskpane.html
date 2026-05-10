@@ -842,7 +842,13 @@ function confirmNewsletter() {
   document.getElementById('applyBtn').style.display   = 'block';
   document.getElementById('detectionBadge').innerHTML =
     `<span class="newsletter-badge">✦ Als Newsletter markiert</span>`;
-  loadFoldersOnce(); // user-gesture context → displayDialogAsync allowed
+  // If no cached token: open auth dialog directly (user-gesture preserved).
+  // If token exists: just load folders silently.
+  if (!getCachedToken()) {
+    openAuthDialog(() => loadFolders());
+  } else {
+    loadFolders();
+  }
 }
 
 function denyNewsletter() {
@@ -908,11 +914,18 @@ function cacheToken(token) {
 function getGraphToken() {
   const cached = getCachedToken();
   if (cached) return Promise.resolve(cached);
+  return Promise.reject(new Error('Bitte zuerst anmelden (🔑-Schaltfläche).'));
+}
 
-  return new Promise((resolve, reject) => {
-    Office.context.ui.displayDialogAsync(AUTH_URL, { height: 60, width: 40, promptBeforeOpen: false }, result => {
+// Must be called DIRECTLY from a button onclick — no async wrappers.
+// displayDialogAsync requires an active user gesture in Outlook Web.
+function openAuthDialog(onSuccess) {
+  Office.context.ui.displayDialogAsync(
+    AUTH_URL,
+    { height: 60, width: 40, promptBeforeOpen: false },
+    result => {
       if (result.status !== Office.AsyncResultStatus.Succeeded) {
-        reject(new Error('Login-Dialog konnte nicht geöffnet werden: ' + (result.error?.message || '')));
+        showToast('Anmeldung fehlgeschlagen: ' + (result.error?.message || ''), 'error');
         return;
       }
       const dialog = result.value;
@@ -920,15 +933,19 @@ function getGraphToken() {
         dialog.close();
         try {
           const msg = JSON.parse(ev.message);
-          if (msg.status === 'success') { cacheToken(msg.token); resolve(msg.token); }
-          else reject(new Error(msg.message || 'Login fehlgeschlagen'));
-        } catch (e) { reject(e); }
+          if (msg.status === 'success') {
+            cacheToken(msg.token);
+            if (onSuccess) onSuccess();
+          } else {
+            showToast('Anmeldung fehlgeschlagen: ' + (msg.message || ''), 'error');
+          }
+        } catch (e) { showToast('Anmeldung fehlgeschlagen.', 'error'); }
       });
       dialog.addEventHandler(Office.EventType.DialogEventReceived, ev => {
-        if (ev.error === 12006) reject(new Error('Login abgebrochen'));
+        if (ev.error === 12006) showToast('Anmeldung abgebrochen.', 'error');
       });
-    });
-  });
+    }
+  );
 }
 
 async function graphFetch(path, opts = {}) {
@@ -951,10 +968,15 @@ async function graphFetch(path, opts = {}) {
 // ══════════════════════════════════════════════════
 //  ORDNER
 // ══════════════════════════════════════════════════
+// Called from onclick on the folder select — direct user gesture.
 function loadFoldersOnce() {
   if (folders.length > 0 || foldersLoading) return;
-  foldersLoading = true;
-  loadFolders().finally(() => { foldersLoading = false; });
+  if (!getCachedToken()) {
+    openAuthDialog(() => loadFolders()); // direct dialog call, no async chain
+  } else {
+    foldersLoading = true;
+    loadFolders().finally(() => { foldersLoading = false; });
+  }
 }
 
 async function loadFolders() {
@@ -1033,11 +1055,14 @@ function changeLimit(delta) {
 //  REGEL ANWENDEN
 // ══════════════════════════════════════════════════
 function applyRule() {
-  // Fallback: if folders not loaded yet (auto-detected newsletter), load now.
-  // applyRule is always triggered by a button click = user gesture = dialog allowed.
+  // Fallback: folders not loaded yet (e.g. auto-detected newsletter with existing override).
+  // applyRule is always from a button click = user gesture = direct dialog call OK.
   if (folders.length === 0) {
-    loadFoldersOnce();
-    showToast('Ordner werden geladen – bitte danach Ordner wählen und erneut klicken.', 'success');
+    if (!getCachedToken()) {
+      openAuthDialog(() => { loadFolders(); showToast('Ordner geladen – bitte Ordner wählen und erneut klicken.', 'success'); });
+    } else {
+      loadFolders().then(() => showToast('Ordner geladen – bitte Ordner wählen und erneut klicken.', 'success'));
+    }
     return;
   }
 
