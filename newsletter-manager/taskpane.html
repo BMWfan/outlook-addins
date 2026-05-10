@@ -1120,11 +1120,11 @@ async function moveCurrentEmail(folderId, callback) {
   }
 }
 
-// Find all newsletter emails from sender across all folders (except target) and move them
+// Move only newsletter emails from this sender (not personal emails with same address)
 async function moveAllFromSender(sender, folderId, callback) {
   try {
     const filter = `from/emailAddress/address eq '${sender.replace(/'/g, "''")}'`;
-    let url = `/me/messages?$filter=${encodeURIComponent(filter)}&$select=id,parentFolderId&$top=100`;
+    let url = `/me/messages?$filter=${encodeURIComponent(filter)}&$select=id,parentFolderId,subject,internetMessageHeaders&$top=100`;
     let all = [];
     while (url) {
       const data = await graphFetch(url);
@@ -1132,10 +1132,10 @@ async function moveAllFromSender(sender, folderId, callback) {
       url = data['@odata.nextLink'] || null;
     }
 
-    // User already confirmed this sender is a newsletter — move everything not yet in target.
-    const toMove  = all.filter(m => m.parentFolderId !== folderId);
-    const skipped = 0;
-    console.log('[NLM] moveAllFromSender: found', all.length, '→ move', toMove.length);
+    const candidates = all.filter(m => m.parentFolderId !== folderId);
+    const toMove     = candidates.filter(m => looksLikeNewsletter(m));
+    const skipped    = candidates.length - toMove.length;
+    console.log('[NLM] moveAllFromSender: found', all.length, '→ newsletter', toMove.length, 'skip', skipped);
 
     let moved = 0;
     for (const msg of toMove) {
@@ -1157,11 +1157,25 @@ async function moveAllFromSender(sender, folderId, callback) {
 }
 
 function looksLikeNewsletter(msg) {
-  const headers = msg.internetMessageHeaders || [];
-  if (headers.some(h => h.name?.toLowerCase() === 'list-unsubscribe')) return true;
+  const headers    = msg.internetMessageHeaders || [];
+  const hNames     = headers.map(h => (h.name  || '').toLowerCase());
+  const hMap       = Object.fromEntries(headers.map(h => [h.name?.toLowerCase(), (h.value || '').toLowerCase()]));
+
+  // Mailing-list headers — never appear in personal email
+  const listHeaders = ['list-unsubscribe','list-id','list-post','list-archive','list-owner','list-help'];
+  if (hNames.some(n => listHeaders.includes(n))) return true;
+
+  // Precedence: bulk / list
+  const prec = hMap['precedence'] || '';
+  if (prec === 'bulk' || prec === 'list') return true;
+
+  // Subject keywords
   const subject = (msg.subject || '').toLowerCase();
-  const KW = ['newsletter','angebot','rabatt','deal','sale','promo','gutschein','aktion','spar','% off','% rabatt'];
-  return KW.some(kw => subject.includes(kw));
+  const KW = ['newsletter','angebot','rabatt','deal','sale','promo','gutschein','aktion','spar',
+               '% off','% rabatt','unsubscribe','abmelden','abonnement','subscription','digest'];
+  if (KW.some(kw => subject.includes(kw))) return true;
+
+  return false;
 }
 
 // ══════════════════════════════════════════════════
