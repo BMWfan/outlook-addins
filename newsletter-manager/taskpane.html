@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>Newsletter Manager</title>
   <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
-  <script src="https://alcdn.msauth.net/browser/2.38.3/js/msal-browser.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@azure/msal-browser@2.38.3/lib/msal-browser.min.js"></script>
   <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet"/>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -878,26 +878,34 @@ function deleteOverride(senderKey) {
 // ══════════════════════════════════════════════════
 //  MSAL / GRAPH HELPER
 // ══════════════════════════════════════════════════
-const _msal = new msal.PublicClientApplication({
-  auth: {
-    clientId:    '0ad0c612-487d-4285-82b4-132de22f7642',
-    authority:   'https://login.microsoftonline.com/common',
-    redirectUri: 'https://bmwfan.github.io/outlook-addins/newsletter-manager/taskpane.html'
-  },
-  cache: { cacheLocation: 'localStorage', storeAuthStateInCookie: true }
-});
+let _msalInstance = null;
 const GRAPH_SCOPES = ['Mail.ReadWrite'];
 
+function getMsal() {
+  if (!_msalInstance) {
+    _msalInstance = new msal.PublicClientApplication({
+      auth: {
+        clientId:    '0ad0c612-487d-4285-82b4-132de22f7642',
+        authority:   'https://login.microsoftonline.com/common',
+        redirectUri: 'https://bmwfan.github.io/outlook-addins/newsletter-manager/taskpane.html'
+      },
+      cache: { cacheLocation: 'localStorage', storeAuthStateInCookie: true }
+    });
+  }
+  return _msalInstance;
+}
+
 async function getGraphToken() {
-  await _msal.handleRedirectPromise().catch(() => {});
-  const accounts = _msal.getAllAccounts();
+  const msalApp = getMsal();
+  await msalApp.handleRedirectPromise().catch(() => {});
+  const accounts = msalApp.getAllAccounts();
   if (accounts.length > 0) {
     try {
-      const r = await _msal.acquireTokenSilent({ scopes: GRAPH_SCOPES, account: accounts[0] });
+      const r = await msalApp.acquireTokenSilent({ scopes: GRAPH_SCOPES, account: accounts[0] });
       return r.accessToken;
     } catch(_) {}
   }
-  const r = await _msal.acquireTokenPopup({ scopes: GRAPH_SCOPES });
+  const r = await msalApp.acquireTokenPopup({ scopes: GRAPH_SCOPES });
   return r.accessToken;
 }
 
