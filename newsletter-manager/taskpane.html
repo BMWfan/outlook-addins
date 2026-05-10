@@ -1103,8 +1103,11 @@ function applyRule() {
 }
 
 async function moveCurrentEmail(folderId, callback) {
-  const itemId = Office.context.mailbox.item.itemId;
-  if (!itemId) { showToast('Fehler: Item-ID nicht verfügbar.', 'error'); callback(false); return; }
+  const ewsId = Office.context.mailbox.item.itemId;
+  if (!ewsId) { showToast('Fehler: Item-ID nicht verfügbar.', 'error'); callback(false); return; }
+
+  // Office gives an EWS-format ID; Graph API needs the REST format
+  const itemId = Office.context.mailbox.convertToRestId(ewsId, Office.MailboxEnums.RestVersion.v2_0);
 
   try {
     await graphFetch(`/me/messages/${encodeURIComponent(itemId)}/move`, {
