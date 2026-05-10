@@ -1124,7 +1124,7 @@ async function moveCurrentEmail(folderId, callback) {
 async function moveAllFromSender(sender, folderId, callback) {
   try {
     const filter = `from/emailAddress/address eq '${sender.replace(/'/g, "''")}'`;
-    let url = `/me/messages?$filter=${encodeURIComponent(filter)}&$select=id,parentFolderId,subject,internetMessageHeaders&$top=100`;
+    let url = `/me/messages?$filter=${encodeURIComponent(filter)}&$select=id,parentFolderId&$top=100`;
     let all = [];
     while (url) {
       const data = await graphFetch(url);
@@ -1132,10 +1132,10 @@ async function moveAllFromSender(sender, folderId, callback) {
       url = data['@odata.nextLink'] || null;
     }
 
-    const candidates = all.filter(m => m.parentFolderId !== folderId);
-    const skipped    = candidates.filter(m => !looksLikeNewsletter(m)).length;
-    const toMove     = candidates.filter(m => looksLikeNewsletter(m));
-    console.log('[NLM] moveAllFromSender: found', all.length, '→ move', toMove.length, 'skip', skipped);
+    // User already confirmed this sender is a newsletter — move everything not yet in target.
+    const toMove  = all.filter(m => m.parentFolderId !== folderId);
+    const skipped = 0;
+    console.log('[NLM] moveAllFromSender: found', all.length, '→ move', toMove.length);
 
     let moved = 0;
     for (const msg of toMove) {
