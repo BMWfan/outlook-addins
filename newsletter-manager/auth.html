@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Anmeldung</title>
+  <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+  <script src="https://bmwfan.github.io/outlook-addins/newsletter-manager/msal-browser.min.js"></script>
+  <style>
+    body { font-family: -apple-system, sans-serif; display: flex; align-items: center;
+           justify-content: center; height: 100vh; margin: 0; background: #f5f5f5; }
+    .box { text-align: center; color: #444; }
+    .spinner { width: 36px; height: 36px; border: 3px solid #ddd;
+               border-top-color: #6B52E8; border-radius: 50%;
+               animation: spin 0.8s linear infinite; margin: 0 auto 16px; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+  <div class="box">
+    <div class="spinner"></div>
+    <p>Anmeldung läuft…</p>
+  </div>
+  <script>
+    Office.initialize = function() {};
+
+    const msalApp = new msal.PublicClientApplication({
+      auth: {
+        clientId:    '0ad0c612-487d-4285-82b4-132de22f7642',
+        authority:   'https://login.microsoftonline.com/common',
+        redirectUri: 'https://bmwfan.github.io/outlook-addins/newsletter-manager/auth.html'
+      },
+      cache: { cacheLocation: 'localStorage', storeAuthStateInCookie: true }
+    });
+
+    async function run() {
+      try {
+        // If this is the redirect-back from Microsoft login:
+        const response = await msalApp.handleRedirectPromise();
+        if (response && response.accessToken) {
+          Office.context.ui.messageParent(JSON.stringify({
+            status: 'success',
+            token:  response.accessToken
+          }));
+          return;
+        }
+        // First load – kick off the login redirect:
+        await msalApp.loginRedirect({ scopes: ['Mail.ReadWrite'] });
+      } catch (e) {
+        Office.context.ui.messageParent(JSON.stringify({
+          status:  'error',
+          message: e.message
+        }));
+      }
+    }
+
+    run();
+  </script>
+</body>
+</html>

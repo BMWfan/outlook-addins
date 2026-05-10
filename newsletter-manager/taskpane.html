@@ -879,6 +879,8 @@ function deleteOverride(senderKey) {
 //  MSAL / GRAPH HELPER
 // ══════════════════════════════════════════════════
 let _msalInstance = null;
+let _graphToken   = null;
+let _tokenExpiry  = 0;
 const GRAPH_SCOPES = ['Mail.ReadWrite'];
 
 function getMsal() {
@@ -887,7 +889,7 @@ function getMsal() {
       auth: {
         clientId:    '0ad0c612-487d-4285-82b4-132de22f7642',
         authority:   'https://login.microsoftonline.com/common',
-        redirectUri: 'https://bmwfan.github.io/outlook-addins/newsletter-manager/taskpane.html'
+        redirectUri: 'https://bmwfan.github.io/outlook-addins/newsletter-manager/auth.html'
       },
       cache: { cacheLocation: 'localStorage', storeAuthStateInCookie: true }
     });
@@ -896,17 +898,48 @@ function getMsal() {
 }
 
 async function getGraphToken() {
-  const msalApp = getMsal();
-  await msalApp.handleRedirectPromise().catch(() => {});
+  // Return cached token if still valid
+  if (_graphToken && Date.now() < _tokenExpiry) return _graphToken;
+
+  // Try silent renewal via MSAL cache
+  const msalApp  = getMsal();
   const accounts = msalApp.getAllAccounts();
   if (accounts.length > 0) {
     try {
       const r = await msalApp.acquireTokenSilent({ scopes: GRAPH_SCOPES, account: accounts[0] });
-      return r.accessToken;
+      _graphToken  = r.accessToken;
+      _tokenExpiry = Date.now() + 50 * 60 * 1000;
+      return _graphToken;
     } catch(_) {}
   }
-  const r = await msalApp.acquireTokenPopup({ scopes: GRAPH_SCOPES });
-  return r.accessToken;
+
+  // Interactive login via Office.js dialog (works in iframe context)
+  return new Promise((resolve, reject) => {
+    const authUrl = 'https://bmwfan.github.io/outlook-addins/newsletter-manager/auth.html';
+    Office.context.ui.displayDialogAsync(authUrl, { height: 60, width: 40 }, result => {
+      if (result.status !== Office.AsyncResultStatus.Succeeded) {
+        reject(new Error('Login-Dialog konnte nicht geöffnet werden: ' + result.error?.message));
+        return;
+      }
+      const dialog = result.value;
+      dialog.addEventHandler(Office.EventType.DialogMessageReceived, ev => {
+        dialog.close();
+        try {
+          const msg = JSON.parse(ev.message);
+          if (msg.status === 'success') {
+            _graphToken  = msg.token;
+            _tokenExpiry = Date.now() + 50 * 60 * 1000;
+            resolve(msg.token);
+          } else {
+            reject(new Error(msg.message || 'Login fehlgeschlagen'));
+          }
+        } catch (e) { reject(e); }
+      });
+      dialog.addEventHandler(Office.EventType.DialogEventReceived, ev => {
+        if (ev.error === 12006) reject(new Error('Login abgebrochen'));
+      });
+    });
+  });
 }
 
 async function graphFetch(path, opts = {}) {
