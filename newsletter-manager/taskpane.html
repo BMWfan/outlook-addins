@@ -1030,8 +1030,13 @@ function applyRule() {
 }
 
 function moveCurrentEmail(folderId, callback) {
-  const itemId = Office.context.mailbox.item.itemId;
-  if (!itemId) { callback(); return; }
+  let itemId = Office.context.mailbox.item.itemId;
+  if (!itemId) { showToast('Fehler: Item-ID nicht verfügbar.', 'error'); callback(); return; }
+
+  // Outlook Web returns REST-format IDs – convert to EWS format for MoveItem
+  try {
+    itemId = Office.context.mailbox.convertToEwsId(itemId, Office.MailboxEnums.RestVersion.v2_0);
+  } catch(_) {}
 
   const ews = `<?xml version="1.0" encoding="utf-8"?>
 <soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"
@@ -1045,7 +1050,12 @@ function moveCurrentEmail(folderId, callback) {
   </soap:Body>
 </soap:Envelope>`;
 
-  Office.context.mailbox.makeEwsRequestAsync(ews, () => callback());
+  Office.context.mailbox.makeEwsRequestAsync(ews, function(result) {
+    if (result.status !== Office.AsyncResultStatus.Succeeded) {
+      showToast(`EWS Fehler: ${result.error?.message || JSON.stringify(result.error)}`, 'error');
+    }
+    callback();
+  });
 }
 
 // Returns true if a Message EWS element looks like a newsletter
