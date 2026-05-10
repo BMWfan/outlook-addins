@@ -900,7 +900,7 @@ function getGraphToken() {
   if (cached) return Promise.resolve(cached);
 
   return new Promise((resolve, reject) => {
-    Office.context.ui.displayDialogAsync(AUTH_URL, { height: 60, width: 40 }, result => {
+    Office.context.ui.displayDialogAsync(AUTH_URL, { height: 60, width: 40, promptBeforeOpen: false }, result => {
       if (result.status !== Office.AsyncResultStatus.Succeeded) {
         reject(new Error('Login-Dialog konnte nicht geöffnet werden: ' + (result.error?.message || '')));
         return;
