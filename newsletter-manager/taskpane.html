@@ -350,9 +350,17 @@
     .rules-header {
       padding: 10px 14px;
       border-bottom: 1px solid var(--border);
-      display: flex; align-items: center; justify-content: space-between;
+      display: flex; align-items: center; gap: 8px;
     }
     .rules-header span { font-size: 10px; font-weight: 500; color: var(--muted); text-transform: uppercase; letter-spacing: 0.8px; }
+    .rules-header .rules-count { margin-right: auto; }
+    .btn-reapply {
+      font-size: 10px; padding: 3px 8px; border-radius: 5px; cursor: pointer;
+      background: var(--surface2); border: 1px solid var(--border); color: var(--muted);
+      font-family: var(--font); transition: all 0.15s;
+    }
+    .btn-reapply:hover { border-color: var(--accent); color: var(--accent); }
+    .btn-reapply:disabled { opacity: 0.4; cursor: default; }
     .rules-count {
       font-family: var(--font-mono);
       font-size: 10px;
@@ -554,6 +562,7 @@
     <div class="rules-header">
       <span>Aktive Regeln</span>
       <span class="rules-count" id="rulesCount">0</span>
+      <button class="btn-reapply" id="reapplyBtn" onclick="reapplyAllRules()" title="Alle Regeln erneut anwenden – verschiebt neu eingegangene Newsletter">↺ Alle anwenden</button>
     </div>
     <div class="rules-list" id="rulesList">
       <div class="rules-empty">Noch keine Regeln gespeichert.</div>
@@ -1108,7 +1117,7 @@ function applyRule() {
 async function moveAllFromSender(sender, folderId, currentIntMsgId, callback) {
   try {
     const filter = `from/emailAddress/address eq '${sender.replace(/'/g, "''")}'`;
-    let url = `/me/messages?$filter=${encodeURIComponent(filter)}&$select=id,parentFolderId,subject,internetMessageHeaders,internetMessageId&$top=100`;
+    let url = `/me/messages?$filter=${encodeURIComponent(filter)}&$select=id,parentFolderId,subject,internetMessageHeaders,internetMessageId,bodyPreview,from&$top=100`;
     let all = [];
     while (url) {
       const data = await graphFetch(url);
@@ -1145,13 +1154,12 @@ async function moveAllFromSender(sender, folderId, currentIntMsgId, callback) {
 }
 
 function looksLikeNewsletter(msg) {
-  const headers    = msg.internetMessageHeaders || [];
-  const hNames     = headers.map(h => (h.name  || '').toLowerCase());
-  const hMap       = Object.fromEntries(headers.map(h => [h.name?.toLowerCase(), (h.value || '').toLowerCase()]));
+  const headers = msg.internetMessageHeaders || [];
+  const hNames  = headers.map(h => (h.name || '').toLowerCase());
+  const hMap    = Object.fromEntries(headers.map(h => [h.name?.toLowerCase(), (h.value || '').toLowerCase()]));
 
   // Mailing-list headers — never appear in personal email
-  const listHeaders = ['list-unsubscribe','list-id','list-post','list-archive','list-owner','list-help'];
-  if (hNames.some(n => listHeaders.includes(n))) return true;
+  if (hNames.some(n => ['list-unsubscribe','list-id','list-post','list-archive','list-owner','list-help'].includes(n))) return true;
 
   // Precedence: bulk / list
   const prec = hMap['precedence'] || '';
@@ -1159,9 +1167,15 @@ function looksLikeNewsletter(msg) {
 
   // Subject keywords
   const subject = (msg.subject || '').toLowerCase();
-  const KW = ['newsletter','angebot','rabatt','deal','sale','promo','gutschein','aktion','spar',
-               '% off','% rabatt','unsubscribe','abmelden','abonnement','subscription','digest'];
-  if (KW.some(kw => subject.includes(kw))) return true;
+  if (['newsletter','angebot','rabatt','deal','sale','promo','gutschein','aktion','spar',
+       '% off','% rabatt','unsubscribe','abmelden','abonnement','subscription','digest']
+      .some(kw => subject.includes(kw))) return true;
+
+  // Body preview — newsletters almost always contain an unsubscribe notice
+  const body = (msg.bodyPreview || '').toLowerCase();
+  if (['unsubscribe','abmelden','abbestellen','no longer receive','opt out','opt-out',
+       'newsletter','aus dem verteiler','abonnement']
+      .some(kw => body.includes(kw))) return true;
 
   return false;
 }
@@ -1202,6 +1216,34 @@ function renderRules() {
       </div>
     `;
   }).join('');
+}
+
+// Re-run all saved rules — moves newsletter emails that arrived after the rule was created.
+// Must be called from a user gesture (button click) so the auth dialog can open if needed.
+async function reapplyAllRules() {
+  if (rules.length === 0) { showToast('Keine Regeln gespeichert.', 'error'); return; }
+  const btn = document.getElementById('reapplyBtn');
+  btn.disabled = true;
+  btn.textContent = '↺ Läuft…';
+
+  let totalMoved = 0, totalSkipped = 0;
+  for (const rule of rules) {
+    await new Promise(resolve => {
+      moveAllFromSender(rule.sender, rule.folderId, '', (moved, skipped) => {
+        totalMoved   += moved;
+        totalSkipped += skipped;
+        resolve();
+      });
+    });
+  }
+
+  btn.disabled = false;
+  btn.textContent = '↺ Alle anwenden';
+  const skipNote = totalSkipped > 0 ? ` · ${totalSkipped} persönl. belassen` : '';
+  showToast(totalMoved > 0
+    ? `${totalMoved} Mail${totalMoved !== 1 ? 's' : ''} verschoben${skipNote} ✦`
+    : 'Keine neuen Newsletter gefunden.',
+    totalMoved > 0 ? 'success' : 'error');
 }
 
 function deleteRule(i) {
