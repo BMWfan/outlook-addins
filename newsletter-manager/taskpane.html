@@ -395,6 +395,51 @@
     .spinner { width: 16px; height: 16px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; }
     @keyframes spin { to { transform: rotate(360deg); } }
 
+    /* Learned badge */
+    .learned-badge {
+      margin-top: 8px;
+      display: inline-flex; align-items: center; gap: 5px;
+      background: var(--accent-dim);
+      border: 1px solid rgba(124,111,255,0.4);
+      color: var(--accent);
+      font-size: 10px; font-weight: 500;
+      padding: 3px 8px; border-radius: 20px;
+      font-family: var(--font-mono);
+    }
+    .learned-badge.not-nl {
+      background: var(--red-dim);
+      border-color: rgba(248,113,113,0.3);
+      color: var(--red);
+    }
+    .btn-forget {
+      display: inline-block;
+      margin-top: 5px;
+      background: none; border: none;
+      color: var(--muted); font-size: 10px;
+      cursor: pointer; padding: 0;
+      text-decoration: underline;
+      font-family: var(--font);
+    }
+    .btn-forget:hover { color: var(--text); }
+
+    /* Overrides section inside rules card */
+    .rules-divider { border-top: 1px solid var(--border); }
+    .override-item {
+      padding: 9px 14px;
+      border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; gap: 8px;
+      transition: background 0.1s;
+    }
+    .override-item:last-child { border-bottom: none; }
+    .override-item:hover { background: var(--surface2); }
+    .override-type {
+      font-family: var(--font-mono); font-size: 10px;
+      padding: 2px 6px; border-radius: 4px;
+      border: 1px solid var(--border); white-space: nowrap;
+    }
+    .override-type.nl { color: var(--green); border-color: rgba(74,222,128,0.3); background: var(--green-dim); }
+    .override-type.not-nl { color: var(--red); border-color: rgba(248,113,113,0.3); background: var(--red-dim); }
+
     /* Scrollbar */
     ::-webkit-scrollbar { width: 4px; }
     ::-webkit-scrollbar-track { background: transparent; }
@@ -476,7 +521,7 @@
     ✦ Regel anwenden &amp; E-Mail verschieben
   </button>
 
-  <!-- Saved Rules -->
+  <!-- Saved Rules + Learned Senders -->
   <div class="rules-card">
     <div class="rules-header">
       <span>Aktive Regeln</span>
@@ -484,6 +529,14 @@
     </div>
     <div class="rules-list" id="rulesList">
       <div class="rules-empty">Noch keine Regeln gespeichert.</div>
+    </div>
+
+    <div id="overridesSection" class="rules-divider" style="display:none;">
+      <div class="rules-header">
+        <span>Gelernte Absender</span>
+        <span class="rules-count" id="overridesCount">0</span>
+      </div>
+      <div class="rules-list" id="overridesList"></div>
     </div>
   </div>
 
@@ -503,7 +556,8 @@ let currentEmail = { sender: '', senderName: '', subject: '', body: '' };
 let isNewsletter = false;
 let keepLimit = 5;
 let folders = [];
-let rules = JSON.parse(localStorage.getItem('nlm_rules') || '[]');
+let rules    = JSON.parse(localStorage.getItem('nlm_rules')     || '[]');
+let overrides = JSON.parse(localStorage.getItem('nlm_overrides') || '{}');
 
 // Newsletter-Erkennungs-Signale
 const NEWSLETTER_SIGNALS = [
@@ -547,31 +601,54 @@ function loadCurrentEmail() {
 //  NEWSLETTER ANALYSE
 // ══════════════════════════════════════════════════
 function analyzeEmail() {
-  const body = currentEmail.body.toLowerCase();
-  const subject = currentEmail.subject.toLowerCase();
-  const sender = currentEmail.sender.toLowerCase();
-
-  const hits = {
-    unsubscribe_link:  body.includes('abmelden') || body.includes('unsubscribe') || body.includes('abbestellen'),
-    unsubscribe_header: body.includes('list-unsubscribe'),
-    bulk_sender:       sender.includes('newsletter') || sender.includes('noreply') || sender.includes('no-reply') || sender.includes('info@') || sender.includes('marketing'),
-    subject_keyword:   subject.includes('newsletter') || subject.includes('angebot') || subject.includes('deal') || subject.includes('%') || subject.includes('rabatt'),
-    promo_keyword:     body.includes('angebot') || body.includes('rabatt') || body.includes('jetzt kaufen') || body.includes('jetzt bestellen') || body.includes('nur heute'),
-    noreply:           sender.includes('noreply') || sender.includes('no-reply') || sender.includes('donotreply'),
-    html_only:         body.length > 2000 && body.includes('<table'),
-  };
-
-  const hitCount = Object.values(hits).filter(Boolean).length;
-  isNewsletter = hitCount >= 2;
-
-  // UI updaten
+  // Shared UI setup
   document.getElementById('loadingState').style.display = 'none';
   document.getElementById('mainContent').style.display = 'flex';
 
   const initials = currentEmail.senderName.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase() || '?';
   document.getElementById('senderAvatar').textContent = initials;
-  document.getElementById('senderName').textContent = currentEmail.senderName;
-  document.getElementById('senderEmail').textContent = currentEmail.sender;
+  document.getElementById('senderName').textContent   = currentEmail.senderName;
+  document.getElementById('senderEmail').textContent  = currentEmail.sender;
+
+  // Override check – skip signal analysis if sender was previously taught
+  const override = overrides[currentEmail.sender.toLowerCase()];
+  if (override) {
+    isNewsletter = override.type === 'newsletter';
+    const badge  = document.getElementById('detectionBadge');
+    const cls    = isNewsletter ? '' : ' not-nl';
+    const label  = isNewsletter ? 'Newsletter' : 'Kein Newsletter';
+    badge.innerHTML = `
+      <span class="learned-badge${cls}">🧠 Gelernt: ${label}</span><br>
+      <button class="btn-forget" onclick="forgetOverride()">Feedback zurücksetzen</button>
+    `;
+    document.getElementById('signalsList').innerHTML =
+      '<span class="signal">Klassifikation aus deinem Feedback</span>';
+
+    document.getElementById('actionRow').style.display = 'none';
+    if (isNewsletter) {
+      document.getElementById('configCard').style.display = 'block';
+      document.getElementById('applyBtn').style.display   = 'block';
+    }
+    return;
+  }
+
+  // Signal analysis
+  const body    = currentEmail.body.toLowerCase();
+  const subject = currentEmail.subject.toLowerCase();
+  const sender  = currentEmail.sender.toLowerCase();
+
+  const hits = {
+    unsubscribe_link:   body.includes('abmelden') || body.includes('unsubscribe') || body.includes('abbestellen'),
+    unsubscribe_header: body.includes('list-unsubscribe'),
+    bulk_sender:        sender.includes('newsletter') || sender.includes('noreply') || sender.includes('no-reply') || sender.includes('info@') || sender.includes('marketing'),
+    subject_keyword:    subject.includes('newsletter') || subject.includes('angebot') || subject.includes('deal') || subject.includes('%') || subject.includes('rabatt'),
+    promo_keyword:      body.includes('angebot') || body.includes('rabatt') || body.includes('jetzt kaufen') || body.includes('jetzt bestellen') || body.includes('nur heute'),
+    noreply:            sender.includes('noreply') || sender.includes('no-reply') || sender.includes('donotreply'),
+    html_only:          body.length > 2000 && body.includes('<table'),
+  };
+
+  const hitCount = Object.values(hits).filter(Boolean).length;
+  isNewsletter   = hitCount >= 2;
 
   const badge = document.getElementById('detectionBadge');
   if (isNewsletter) {
@@ -580,29 +657,60 @@ function analyzeEmail() {
     badge.innerHTML = `<span class="not-newsletter-badge">○ Kein Newsletter erkannt</span>`;
   }
 
-  // Signale anzeigen
-  const signalsList = document.getElementById('signalsList');
-  signalsList.innerHTML = NEWSLETTER_SIGNALS.map(s =>
+  document.getElementById('signalsList').innerHTML = NEWSLETTER_SIGNALS.map(s =>
     `<span class="signal ${hits[s.key] ? 'hit' : ''}">${hits[s.key] ? '✓' : '○'} ${s.label}</span>`
   ).join('');
 }
 
 // ══════════════════════════════════════════════════
-//  USER AKTIONEN
+//  USER ACTIONS + LEARNING
 // ══════════════════════════════════════════════════
 function confirmNewsletter() {
   isNewsletter = true;
+  saveOverride(currentEmail.sender, currentEmail.senderName, 'newsletter');
   document.getElementById('actionRow').style.display = 'none';
   document.getElementById('configCard').style.display = 'block';
-  document.getElementById('applyBtn').style.display = 'block';
+  document.getElementById('applyBtn').style.display   = 'block';
 
   const badge = document.getElementById('detectionBadge');
   badge.innerHTML = `<span class="newsletter-badge">✦ Als Newsletter markiert</span>`;
 }
 
 function denyNewsletter() {
-  showToast('E-Mail als kein Newsletter markiert.', 'error');
+  saveOverride(currentEmail.sender, currentEmail.senderName, 'not-newsletter');
   document.getElementById('actionRow').style.display = 'none';
+  const badge = document.getElementById('detectionBadge');
+  badge.innerHTML = `<span class="not-newsletter-badge">○ Kein Newsletter</span>`;
+  showToast('Gespeichert – wird künftig nicht mehr erkannt.', 'error');
+}
+
+function saveOverride(sender, senderName, type) {
+  overrides[sender.toLowerCase()] = { type, senderName };
+  localStorage.setItem('nlm_overrides', JSON.stringify(overrides));
+  renderRules();
+}
+
+function forgetOverride() {
+  delete overrides[currentEmail.sender.toLowerCase()];
+  localStorage.setItem('nlm_overrides', JSON.stringify(overrides));
+  // Reset UI to fresh state
+  document.getElementById('configCard').style.display = 'none';
+  document.getElementById('applyBtn').style.display   = 'none';
+  document.getElementById('actionRow').style.display  = 'flex';
+  // Re-fetch body and re-analyse
+  Office.context.mailbox.item.body.getAsync(Office.CoercionType.Html, function(result) {
+    currentEmail.body = result.value || '';
+    analyzeEmail();
+  });
+  renderRules();
+  showToast('Feedback gelöscht – Signale werden neu analysiert.', 'error');
+}
+
+function deleteOverride(senderKey) {
+  delete overrides[senderKey];
+  localStorage.setItem('nlm_overrides', JSON.stringify(overrides));
+  renderRules();
+  showToast('Feedback gelöscht.', 'error');
 }
 
 // ══════════════════════════════════════════════════
@@ -812,20 +920,39 @@ function cleanupOldEmails(sender, folderId, keepCount) {
 //  REGELN ANZEIGEN
 // ══════════════════════════════════════════════════
 function renderRules() {
+  // Newsletter rules
   document.getElementById('rulesCount').textContent = rules.length;
   const list = document.getElementById('rulesList');
-  if (rules.length === 0) {
-    list.innerHTML = '<div class="rules-empty">Noch keine Regeln gespeichert.</div>';
+  list.innerHTML = rules.length === 0
+    ? '<div class="rules-empty">Noch keine Regeln gespeichert.</div>'
+    : rules.map((r, i) => `
+        <div class="rule-item">
+          <div class="rule-sender">${r.senderName || r.sender}</div>
+          <div class="rule-folder">→ ${r.folderName}</div>
+          <div class="rule-limit">max ${r.limit}</div>
+          <button class="rule-delete" onclick="deleteRule(${i})" title="Regel löschen">×</button>
+        </div>
+      `).join('');
+
+  // Learned overrides
+  const overridesSection = document.getElementById('overridesSection');
+  const entries = Object.entries(overrides);
+  if (entries.length === 0) {
+    overridesSection.style.display = 'none';
     return;
   }
-  list.innerHTML = rules.map((r, i) => `
-    <div class="rule-item">
-      <div class="rule-sender">${r.senderName || r.sender}</div>
-      <div class="rule-folder">→ ${r.folderName}</div>
-      <div class="rule-limit">max ${r.limit}</div>
-      <button class="rule-delete" onclick="deleteRule(${i})" title="Regel löschen">×</button>
-    </div>
-  `).join('');
+  overridesSection.style.display = 'block';
+  document.getElementById('overridesCount').textContent = entries.length;
+  document.getElementById('overridesList').innerHTML = entries.map(([key, data]) => {
+    const isNl = data.type === 'newsletter';
+    return `
+      <div class="override-item">
+        <div class="rule-sender" style="flex:1">${data.senderName || key}</div>
+        <div class="override-type ${isNl ? 'nl' : 'not-nl'}">${isNl ? '✦ Newsletter' : '○ Kein Newsletter'}</div>
+        <button class="rule-delete" onclick="deleteOverride('${key.replace(/'/g, "\\'")}')" title="Feedback löschen">×</button>
+      </div>
+    `;
+  }).join('');
 }
 
 function deleteRule(i) {
