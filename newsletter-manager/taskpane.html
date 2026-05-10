@@ -1,0 +1,852 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Newsletter Manager</title>
+  <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet"/>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0f0f11;
+      --surface: #1a1a1f;
+      --surface2: #242429;
+      --border: #2e2e36;
+      --accent: #7c6fff;
+      --accent-dim: rgba(124,111,255,0.15);
+      --green: #4ade80;
+      --green-dim: rgba(74,222,128,0.12);
+      --red: #f87171;
+      --red-dim: rgba(248,113,113,0.12);
+      --yellow: #fbbf24;
+      --text: #e8e8f0;
+      --muted: #6b6b7e;
+      --font-mono: 'DM Mono', monospace;
+      --font: 'DM Sans', sans-serif;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font);
+      font-size: 13px;
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    /* ── Header ── */
+    .header {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 14px 16px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+    .header-icon {
+      width: 28px; height: 28px;
+      background: var(--accent-dim);
+      border: 1px solid var(--accent);
+      border-radius: 6px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 14px;
+    }
+    .header h1 {
+      font-size: 14px;
+      font-weight: 600;
+      letter-spacing: -0.3px;
+    }
+    .header .version {
+      margin-left: auto;
+      font-family: var(--font-mono);
+      font-size: 10px;
+      color: var(--muted);
+      background: var(--surface2);
+      padding: 2px 7px;
+      border-radius: 20px;
+      border: 1px solid var(--border);
+    }
+
+    /* ── Main Content ── */
+    .content { padding: 14px 16px; display: flex; flex-direction: column; gap: 12px; }
+
+    /* ── Newsletter Detection Card ── */
+    .detect-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+    }
+    .detect-header {
+      padding: 12px 14px 10px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .detect-header .dot {
+      width: 7px; height: 7px;
+      border-radius: 50%;
+      background: var(--yellow);
+      box-shadow: 0 0 6px var(--yellow);
+      animation: pulse 2s infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+    .detect-header span { font-size: 11px; font-weight: 500; color: var(--muted); text-transform: uppercase; letter-spacing: 0.8px; }
+
+    .sender-info { padding: 12px 14px; }
+    .sender-row { display: flex; align-items: flex-start; gap: 10px; }
+    .sender-avatar {
+      width: 36px; height: 36px; border-radius: 8px;
+      background: var(--accent-dim);
+      border: 1px solid var(--accent);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 15px; font-weight: 600; color: var(--accent);
+      flex-shrink: 0;
+      font-family: var(--font-mono);
+    }
+    .sender-details { flex: 1; }
+    .sender-name { font-weight: 600; font-size: 13px; margin-bottom: 2px; }
+    .sender-email { font-family: var(--font-mono); font-size: 10px; color: var(--muted); }
+    .newsletter-badge {
+      margin-top: 8px;
+      display: inline-flex; align-items: center; gap: 5px;
+      background: var(--green-dim);
+      border: 1px solid rgba(74,222,128,0.3);
+      color: var(--green);
+      font-size: 10px; font-weight: 500;
+      padding: 3px 8px; border-radius: 20px;
+      font-family: var(--font-mono);
+    }
+    .not-newsletter-badge {
+      margin-top: 8px;
+      display: inline-flex; align-items: center; gap: 5px;
+      background: var(--red-dim);
+      border: 1px solid rgba(248,113,113,0.3);
+      color: var(--red);
+      font-size: 10px; font-weight: 500;
+      padding: 3px 8px; border-radius: 20px;
+      font-family: var(--font-mono);
+    }
+
+    /* Signals */
+    .signals {
+      padding: 0 14px 12px;
+      display: flex; flex-wrap: wrap; gap: 5px;
+    }
+    .signal {
+      font-family: var(--font-mono);
+      font-size: 9px;
+      padding: 2px 7px;
+      border-radius: 4px;
+      border: 1px solid var(--border);
+      background: var(--surface2);
+      color: var(--muted);
+    }
+    .signal.hit {
+      border-color: rgba(124,111,255,0.4);
+      background: var(--accent-dim);
+      color: var(--accent);
+    }
+
+    /* Action buttons */
+    .action-row {
+      padding: 10px 14px 14px;
+      display: flex; gap: 8px;
+    }
+    .btn {
+      flex: 1;
+      padding: 9px 12px;
+      border-radius: 7px;
+      font-family: var(--font);
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      border: 1px solid transparent;
+      transition: all 0.15s;
+      display: flex; align-items: center; justify-content: center; gap: 5px;
+    }
+    .btn-confirm {
+      background: var(--green-dim);
+      border-color: rgba(74,222,128,0.35);
+      color: var(--green);
+    }
+    .btn-confirm:hover { background: rgba(74,222,128,0.22); }
+    .btn-deny {
+      background: var(--red-dim);
+      border-color: rgba(248,113,113,0.3);
+      color: var(--red);
+    }
+    .btn-deny:hover { background: rgba(248,113,113,0.2); }
+
+    /* ── Folder + Limit Config ── */
+    .config-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+    }
+    .config-section { padding: 12px 14px; border-bottom: 1px solid var(--border); }
+    .config-section:last-child { border-bottom: none; }
+    .section-label {
+      font-size: 10px; font-weight: 500; color: var(--muted);
+      text-transform: uppercase; letter-spacing: 0.8px;
+      margin-bottom: 8px;
+    }
+
+    /* Folder picker */
+    .folder-row { display: flex; gap: 7px; }
+    select {
+      flex: 1;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      color: var(--text);
+      font-family: var(--font);
+      font-size: 12px;
+      padding: 8px 10px;
+      border-radius: 7px;
+      outline: none;
+      cursor: pointer;
+      appearance: none;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%236b6b7e' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 10px center;
+      padding-right: 30px;
+    }
+    select:focus { border-color: var(--accent); }
+
+    .btn-new-folder {
+      padding: 8px 12px;
+      background: var(--accent-dim);
+      border: 1px solid rgba(124,111,255,0.4);
+      color: var(--accent);
+      border-radius: 7px;
+      font-size: 11px;
+      cursor: pointer;
+      font-family: var(--font);
+      font-weight: 500;
+      white-space: nowrap;
+      transition: all 0.15s;
+    }
+    .btn-new-folder:hover { background: rgba(124,111,255,0.25); }
+
+    /* New folder input */
+    .new-folder-row {
+      display: none;
+      gap: 7px;
+      margin-top: 7px;
+    }
+    .new-folder-row.visible { display: flex; }
+    input[type="text"] {
+      flex: 1;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      color: var(--text);
+      font-family: var(--font-mono);
+      font-size: 12px;
+      padding: 8px 10px;
+      border-radius: 7px;
+      outline: none;
+    }
+    input[type="text"]:focus { border-color: var(--accent); }
+    input[type="text"]::placeholder { color: var(--muted); }
+
+    .btn-create {
+      padding: 8px 12px;
+      background: var(--accent);
+      border: none;
+      color: white;
+      border-radius: 7px;
+      font-size: 11px;
+      font-weight: 500;
+      cursor: pointer;
+      font-family: var(--font);
+      transition: opacity 0.15s;
+    }
+    .btn-create:hover { opacity: 0.85; }
+
+    /* Limit control */
+    .limit-row { display: flex; align-items: center; gap: 10px; }
+    .limit-label { flex: 1; font-size: 12px; color: var(--muted); }
+    .limit-control { display: flex; align-items: center; gap: 0; border: 1px solid var(--border); border-radius: 7px; overflow: hidden; }
+    .limit-btn {
+      width: 32px; height: 32px;
+      background: var(--surface2);
+      border: none;
+      color: var(--text);
+      font-size: 16px;
+      cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      transition: background 0.1s;
+    }
+    .limit-btn:hover { background: var(--border); }
+    .limit-value {
+      width: 38px;
+      text-align: center;
+      font-family: var(--font-mono);
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--accent);
+      background: var(--surface2);
+      border-left: 1px solid var(--border);
+      border-right: 1px solid var(--border);
+      padding: 0 4px;
+      height: 32px;
+      line-height: 32px;
+    }
+
+    /* ── Apply Button ── */
+    .btn-apply {
+      width: 100%;
+      padding: 12px;
+      background: var(--accent);
+      border: none;
+      color: white;
+      border-radius: 8px;
+      font-family: var(--font);
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+      letter-spacing: -0.2px;
+    }
+    .btn-apply:hover { opacity: 0.88; transform: translateY(-1px); }
+    .btn-apply:active { transform: translateY(0); }
+    .btn-apply:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+
+    /* ── Status / Toast ── */
+    .toast {
+      position: fixed; bottom: 16px; left: 16px; right: 16px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 9px;
+      padding: 11px 14px;
+      display: flex; align-items: center; gap: 9px;
+      font-size: 12px;
+      transform: translateY(80px);
+      transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+      z-index: 999;
+    }
+    .toast.show { transform: translateY(0); }
+    .toast.success { border-color: rgba(74,222,128,0.4); }
+    .toast.error { border-color: rgba(248,113,113,0.4); }
+    .toast-icon { font-size: 16px; }
+
+    /* ── Rules List ── */
+    .rules-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+    }
+    .rules-header {
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .rules-header span { font-size: 10px; font-weight: 500; color: var(--muted); text-transform: uppercase; letter-spacing: 0.8px; }
+    .rules-count {
+      font-family: var(--font-mono);
+      font-size: 10px;
+      background: var(--accent-dim);
+      color: var(--accent);
+      padding: 2px 7px;
+      border-radius: 20px;
+      border: 1px solid rgba(124,111,255,0.3);
+    }
+    .rules-list { max-height: 160px; overflow-y: auto; }
+    .rule-item {
+      padding: 9px 14px;
+      border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; gap: 8px;
+      transition: background 0.1s;
+    }
+    .rule-item:last-child { border-bottom: none; }
+    .rule-item:hover { background: var(--surface2); }
+    .rule-sender { flex: 1; font-size: 12px; font-weight: 500; }
+    .rule-folder { font-family: var(--font-mono); font-size: 10px; color: var(--accent); }
+    .rule-limit {
+      font-family: var(--font-mono);
+      font-size: 10px;
+      color: var(--muted);
+      background: var(--surface2);
+      padding: 2px 6px;
+      border-radius: 4px;
+      border: 1px solid var(--border);
+    }
+    .rule-delete {
+      background: none; border: none; color: var(--muted);
+      cursor: pointer; font-size: 14px; padding: 2px 4px;
+      border-radius: 4px; transition: all 0.1s;
+    }
+    .rule-delete:hover { color: var(--red); background: var(--red-dim); }
+    .rules-empty { padding: 20px 14px; text-align: center; color: var(--muted); font-size: 11px; }
+
+    /* Loading */
+    .loading { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; padding: 20px 16px; }
+    .spinner { width: 16px; height: 16px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* Scrollbar */
+    ::-webkit-scrollbar { width: 4px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+  </style>
+</head>
+<body>
+
+<div class="header">
+  <div class="header-icon">📬</div>
+  <h1>Newsletter Manager</h1>
+  <span class="version">v1.0</span>
+</div>
+
+<!-- Loading state -->
+<div class="loading" id="loadingState">
+  <div class="spinner"></div>
+  <span>Analysiere E-Mail…</span>
+</div>
+
+<div class="content" id="mainContent" style="display:none;">
+
+  <!-- Detection Card -->
+  <div class="detect-card" id="detectCard">
+    <div class="detect-header">
+      <div class="dot"></div>
+      <span>Erkennung</span>
+    </div>
+    <div class="sender-info">
+      <div class="sender-row">
+        <div class="sender-avatar" id="senderAvatar">?</div>
+        <div class="sender-details">
+          <div class="sender-name" id="senderName">–</div>
+          <div class="sender-email" id="senderEmail">–</div>
+          <div id="detectionBadge"></div>
+        </div>
+      </div>
+    </div>
+    <div class="signals" id="signalsList"></div>
+    <div class="action-row" id="actionRow">
+      <button class="btn btn-confirm" onclick="confirmNewsletter()">✓ Ja, Newsletter</button>
+      <button class="btn btn-deny" onclick="denyNewsletter()">✗ Kein Newsletter</button>
+    </div>
+  </div>
+
+  <!-- Config (sichtbar nach Bestätigung) -->
+  <div class="config-card" id="configCard" style="display:none;">
+
+    <div class="config-section">
+      <div class="section-label">📁 Zielordner</div>
+      <div class="folder-row">
+        <select id="folderSelect">
+          <option value="">Ordner laden…</option>
+        </select>
+        <button class="btn-new-folder" onclick="toggleNewFolder()">+ Neu</button>
+      </div>
+      <div class="new-folder-row" id="newFolderRow">
+        <input type="text" id="newFolderInput" placeholder="Ordnername eingeben…"/>
+        <button class="btn-create" onclick="createFolder()">Erstellen</button>
+      </div>
+    </div>
+
+    <div class="config-section">
+      <div class="section-label">🗂 Max. E-Mails behalten</div>
+      <div class="limit-row">
+        <span class="limit-label">Letzte E-Mails von diesem Absender</span>
+        <div class="limit-control">
+          <button class="limit-btn" onclick="changeLimit(-1)">−</button>
+          <div class="limit-value" id="limitValue">5</div>
+          <button class="limit-btn" onclick="changeLimit(+1)">+</button>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Apply button -->
+  <button class="btn-apply" id="applyBtn" style="display:none;" onclick="applyRule()">
+    ✦ Regel anwenden &amp; E-Mail verschieben
+  </button>
+
+  <!-- Saved Rules -->
+  <div class="rules-card">
+    <div class="rules-header">
+      <span>Aktive Regeln</span>
+      <span class="rules-count" id="rulesCount">0</span>
+    </div>
+    <div class="rules-list" id="rulesList">
+      <div class="rules-empty">Noch keine Regeln gespeichert.</div>
+    </div>
+  </div>
+
+</div>
+
+<!-- Toast -->
+<div class="toast" id="toast">
+  <span class="toast-icon" id="toastIcon">✓</span>
+  <span id="toastMsg">–</span>
+</div>
+
+<script>
+// ══════════════════════════════════════════════════
+//  STATE
+// ══════════════════════════════════════════════════
+let currentEmail = { sender: '', senderName: '', subject: '', body: '' };
+let isNewsletter = false;
+let keepLimit = 5;
+let folders = [];
+let rules = JSON.parse(localStorage.getItem('nlm_rules') || '[]');
+
+// Newsletter-Erkennungs-Signale
+const NEWSLETTER_SIGNALS = [
+  { label: 'List-Unsubscribe Header',  key: 'unsubscribe_header' },
+  { label: 'Abmelden-Link',            key: 'unsubscribe_link' },
+  { label: 'Bulk-Sender',              key: 'bulk_sender' },
+  { label: '"Newsletter" im Betreff',  key: 'subject_keyword' },
+  { label: 'Angebots-Keywords',        key: 'promo_keyword' },
+  { label: 'No-Reply Absender',        key: 'noreply' },
+  { label: 'HTML-only E-Mail',         key: 'html_only' },
+];
+
+// ══════════════════════════════════════════════════
+//  OFFICE INIT
+// ══════════════════════════════════════════════════
+Office.onReady(function(info) {
+  if (info.host === Office.HostType.Outlook) {
+    loadCurrentEmail();
+    renderRules();
+  }
+});
+
+function loadCurrentEmail() {
+  const item = Office.context.mailbox.item;
+
+  currentEmail.subject = item.subject || '';
+  currentEmail.sender = item.from?.emailAddress || '';
+  currentEmail.senderName = item.from?.displayName || currentEmail.sender;
+
+  // Body laden für Signale
+  item.body.getAsync(Office.CoercionType.Html, function(result) {
+    currentEmail.body = result.value || '';
+    analyzeEmail();
+  });
+
+  // Ordner laden
+  loadFolders();
+}
+
+// ══════════════════════════════════════════════════
+//  NEWSLETTER ANALYSE
+// ══════════════════════════════════════════════════
+function analyzeEmail() {
+  const body = currentEmail.body.toLowerCase();
+  const subject = currentEmail.subject.toLowerCase();
+  const sender = currentEmail.sender.toLowerCase();
+
+  const hits = {
+    unsubscribe_link:  body.includes('abmelden') || body.includes('unsubscribe') || body.includes('abbestellen'),
+    unsubscribe_header: body.includes('list-unsubscribe'),
+    bulk_sender:       sender.includes('newsletter') || sender.includes('noreply') || sender.includes('no-reply') || sender.includes('info@') || sender.includes('marketing'),
+    subject_keyword:   subject.includes('newsletter') || subject.includes('angebot') || subject.includes('deal') || subject.includes('%') || subject.includes('rabatt'),
+    promo_keyword:     body.includes('angebot') || body.includes('rabatt') || body.includes('jetzt kaufen') || body.includes('jetzt bestellen') || body.includes('nur heute'),
+    noreply:           sender.includes('noreply') || sender.includes('no-reply') || sender.includes('donotreply'),
+    html_only:         body.length > 2000 && body.includes('<table'),
+  };
+
+  const hitCount = Object.values(hits).filter(Boolean).length;
+  isNewsletter = hitCount >= 2;
+
+  // UI updaten
+  document.getElementById('loadingState').style.display = 'none';
+  document.getElementById('mainContent').style.display = 'flex';
+
+  const initials = currentEmail.senderName.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase() || '?';
+  document.getElementById('senderAvatar').textContent = initials;
+  document.getElementById('senderName').textContent = currentEmail.senderName;
+  document.getElementById('senderEmail').textContent = currentEmail.sender;
+
+  const badge = document.getElementById('detectionBadge');
+  if (isNewsletter) {
+    badge.innerHTML = `<span class="newsletter-badge">✦ Newsletter erkannt (${hitCount}/${NEWSLETTER_SIGNALS.length} Signale)</span>`;
+  } else {
+    badge.innerHTML = `<span class="not-newsletter-badge">○ Kein Newsletter erkannt</span>`;
+  }
+
+  // Signale anzeigen
+  const signalsList = document.getElementById('signalsList');
+  signalsList.innerHTML = NEWSLETTER_SIGNALS.map(s =>
+    `<span class="signal ${hits[s.key] ? 'hit' : ''}">${hits[s.key] ? '✓' : '○'} ${s.label}</span>`
+  ).join('');
+}
+
+// ══════════════════════════════════════════════════
+//  USER AKTIONEN
+// ══════════════════════════════════════════════════
+function confirmNewsletter() {
+  isNewsletter = true;
+  document.getElementById('actionRow').style.display = 'none';
+  document.getElementById('configCard').style.display = 'block';
+  document.getElementById('applyBtn').style.display = 'block';
+
+  const badge = document.getElementById('detectionBadge');
+  badge.innerHTML = `<span class="newsletter-badge">✦ Als Newsletter markiert</span>`;
+}
+
+function denyNewsletter() {
+  showToast('E-Mail als kein Newsletter markiert.', 'error');
+  document.getElementById('actionRow').style.display = 'none';
+}
+
+// ══════════════════════════════════════════════════
+//  ORDNER
+// ══════════════════════════════════════════════════
+function loadFolders() {
+  Office.context.mailbox.makeEwsRequestAsync(buildFolderEwsRequest(), function(result) {
+    if (result.status === Office.AsyncResultStatus.Succeeded) {
+      parseFolders(result.value);
+    } else {
+      // Fallback: Demo-Ordner
+      folders = [{ id: 'inbox', name: 'Posteingang' }, { id: 'newsletters', name: 'Newsletter' }];
+      renderFolderSelect();
+    }
+  });
+}
+
+function buildFolderEwsRequest() {
+  return `<?xml version="1.0" encoding="utf-8"?>
+<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"
+               xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types"
+               xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages">
+  <soap:Body>
+    <m:FindFolder Traversal="Shallow">
+      <m:FolderShape><t:BaseShape>AllProperties</t:BaseShape></m:FolderShape>
+      <m:ParentFolderIds><t:DistinguishedFolderId Id="msgfolderroot"/></m:ParentFolderIds>
+    </m:FindFolder>
+  </soap:Body>
+</soap:Envelope>`;
+}
+
+function parseFolders(xml) {
+  folders = [];
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(xml, 'text/xml');
+  const folderNodes = doc.querySelectorAll('Folder');
+  folderNodes.forEach(f => {
+    const id = f.querySelector('FolderId')?.getAttribute('Id');
+    const name = f.querySelector('DisplayName')?.textContent;
+    if (id && name) folders.push({ id, name });
+  });
+  if (folders.length === 0) {
+    folders = [{ id: 'inbox', name: 'Posteingang' }, { id: 'newsletters', name: 'Newsletter' }];
+  }
+  renderFolderSelect();
+}
+
+function renderFolderSelect() {
+  const sel = document.getElementById('folderSelect');
+  sel.innerHTML = folders.map(f =>
+    `<option value="${f.id}">${f.name}</option>`
+  ).join('');
+}
+
+function toggleNewFolder() {
+  const row = document.getElementById('newFolderRow');
+  row.classList.toggle('visible');
+  if (row.classList.contains('visible')) {
+    document.getElementById('newFolderInput').focus();
+  }
+}
+
+function createFolder() {
+  const name = document.getElementById('newFolderInput').value.trim();
+  if (!name) return;
+
+  Office.context.mailbox.makeEwsRequestAsync(buildCreateFolderEws(name), function(result) {
+    if (result.status === Office.AsyncResultStatus.Succeeded) {
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(result.value, 'text/xml');
+      const newId = doc.querySelector('FolderId')?.getAttribute('Id');
+      if (newId) {
+        folders.push({ id: newId, name });
+        renderFolderSelect();
+        document.getElementById('folderSelect').value = newId;
+        document.getElementById('newFolderInput').value = '';
+        document.getElementById('newFolderRow').classList.remove('visible');
+        showToast(`Ordner "${name}" erstellt ✓`, 'success');
+      }
+    } else {
+      // Fallback für Demo
+      const fakeId = 'folder_' + Date.now();
+      folders.push({ id: fakeId, name });
+      renderFolderSelect();
+      document.getElementById('folderSelect').value = fakeId;
+      document.getElementById('newFolderInput').value = '';
+      document.getElementById('newFolderRow').classList.remove('visible');
+      showToast(`Ordner "${name}" erstellt ✓`, 'success');
+    }
+  });
+}
+
+function buildCreateFolderEws(name) {
+  return `<?xml version="1.0" encoding="utf-8"?>
+<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"
+               xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types"
+               xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages">
+  <soap:Body>
+    <m:CreateFolder>
+      <m:ParentFolderId><t:DistinguishedFolderId Id="msgfolderroot"/></m:ParentFolderId>
+      <m:Folders><t:Folder><t:DisplayName>${name}</t:DisplayName></t:Folder></m:Folders>
+    </m:CreateFolder>
+  </soap:Body>
+</soap:Envelope>`;
+}
+
+// ══════════════════════════════════════════════════
+//  LIMIT
+// ══════════════════════════════════════════════════
+function changeLimit(delta) {
+  keepLimit = Math.max(1, Math.min(50, keepLimit + delta));
+  document.getElementById('limitValue').textContent = keepLimit;
+}
+
+// ══════════════════════════════════════════════════
+//  REGEL ANWENDEN
+// ══════════════════════════════════════════════════
+function applyRule() {
+  const folderId = document.getElementById('folderSelect').value;
+  const folderName = folders.find(f => f.id === folderId)?.name || folderId;
+
+  if (!folderId) { showToast('Bitte einen Ordner auswählen.', 'error'); return; }
+
+  // Regel speichern
+  const existingIdx = rules.findIndex(r => r.sender === currentEmail.sender);
+  const rule = { sender: currentEmail.sender, senderName: currentEmail.senderName, folderId, folderName, limit: keepLimit };
+  if (existingIdx >= 0) rules[existingIdx] = rule;
+  else rules.push(rule);
+  localStorage.setItem('nlm_rules', JSON.stringify(rules));
+
+  // E-Mail verschieben
+  moveCurrentEmail(folderId, folderName, () => {
+    // Alte E-Mails bereinigen
+    cleanupOldEmails(currentEmail.sender, folderId, keepLimit);
+    renderRules();
+    showToast(`Verschoben nach "${folderName}" · Max ${keepLimit} behalten ✦`, 'success');
+    document.getElementById('applyBtn').disabled = true;
+  });
+}
+
+function moveCurrentEmail(folderId, folderName, callback) {
+  const itemId = Office.context.mailbox.item.itemId;
+  if (!itemId) { callback(); return; }
+
+  const ews = `<?xml version="1.0" encoding="utf-8"?>
+<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"
+               xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types"
+               xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages">
+  <soap:Body>
+    <m:MoveItem>
+      <m:ToFolderId><t:FolderId Id="${folderId}"/></m:ToFolderId>
+      <m:ItemIds><t:ItemId Id="${itemId}"/></m:ItemIds>
+    </m:MoveItem>
+  </soap:Body>
+</soap:Envelope>`;
+
+  Office.context.mailbox.makeEwsRequestAsync(ews, function(result) {
+    callback();
+  });
+}
+
+function cleanupOldEmails(sender, folderId, keepCount) {
+  // EWS: Suche alle E-Mails vom Absender im Zielordner
+  const ews = `<?xml version="1.0" encoding="utf-8"?>
+<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"
+               xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types"
+               xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages">
+  <soap:Body>
+    <m:FindItem Traversal="Shallow">
+      <m:ItemShape><t:BaseShape>IdOnly</t:BaseShape><t:AdditionalProperties><t:FieldURI FieldURI="message:From"/><t:FieldURI FieldURI="item:DateTimeReceived"/></t:AdditionalProperties></m:ItemShape>
+      <m:SortOrder><t:FieldOrder Order="Descending"><t:FieldURI FieldURI="item:DateTimeReceived"/></t:FieldOrder></m:SortOrder>
+      <m:ParentFolderIds><t:FolderId Id="${folderId}"/></m:ParentFolderIds>
+      <m:Restriction>
+        <t:Contains ContainmentMode="Substring" ContainmentComparison="IgnoreCase">
+          <t:FieldURI FieldURI="message:From"/>
+          <t:Constant Value="${sender}"/>
+        </t:Contains>
+      </m:Restriction>
+    </m:FindItem>
+  </soap:Body>
+</soap:Envelope>`;
+
+  Office.context.mailbox.makeEwsRequestAsync(ews, function(result) {
+    if (result.status !== Office.AsyncResultStatus.Succeeded) return;
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(result.value, 'text/xml');
+    const items = Array.from(doc.querySelectorAll('ItemId'));
+    const toDelete = items.slice(keepCount);
+    if (toDelete.length === 0) return;
+
+    const ids = toDelete.map(i => `<t:ItemId Id="${i.getAttribute('Id')}" ChangeKey="${i.getAttribute('ChangeKey')}"/>`).join('');
+    const deleteEws = `<?xml version="1.0" encoding="utf-8"?>
+<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"
+               xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types"
+               xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages">
+  <soap:Body>
+    <m:DeleteItem DeleteType="MoveToDeletedItems">
+      <m:ItemIds>${ids}</m:ItemIds>
+    </m:DeleteItem>
+  </soap:Body>
+</soap:Envelope>`;
+    Office.context.mailbox.makeEwsRequestAsync(deleteEws, function() {});
+  });
+}
+
+// ══════════════════════════════════════════════════
+//  REGELN ANZEIGEN
+// ══════════════════════════════════════════════════
+function renderRules() {
+  document.getElementById('rulesCount').textContent = rules.length;
+  const list = document.getElementById('rulesList');
+  if (rules.length === 0) {
+    list.innerHTML = '<div class="rules-empty">Noch keine Regeln gespeichert.</div>';
+    return;
+  }
+  list.innerHTML = rules.map((r, i) => `
+    <div class="rule-item">
+      <div class="rule-sender">${r.senderName || r.sender}</div>
+      <div class="rule-folder">→ ${r.folderName}</div>
+      <div class="rule-limit">max ${r.limit}</div>
+      <button class="rule-delete" onclick="deleteRule(${i})" title="Regel löschen">×</button>
+    </div>
+  `).join('');
+}
+
+function deleteRule(i) {
+  rules.splice(i, 1);
+  localStorage.setItem('nlm_rules', JSON.stringify(rules));
+  renderRules();
+  showToast('Regel gelöscht.', 'error');
+}
+
+// ══════════════════════════════════════════════════
+//  TOAST
+// ══════════════════════════════════════════════════
+let toastTimer;
+function showToast(msg, type = 'success') {
+  const toast = document.getElementById('toast');
+  document.getElementById('toastMsg').textContent = msg;
+  document.getElementById('toastIcon').textContent = type === 'success' ? '✦' : '✗';
+  toast.className = `toast ${type} show`;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => toast.classList.remove('show'), 3500);
+}
+</script>
+</body>
+</html>
