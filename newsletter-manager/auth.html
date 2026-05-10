@@ -23,7 +23,7 @@
     <p id="msg">Anmeldung läuft…</p>
   </div>
   <script>
-    const SCOPES = ['Mail.ReadWrite'];
+    const SCOPES = ['Mail.ReadWrite', 'MailboxSettings.ReadWrite'];
 
     // Start MSAL immediately so the auth-code hash is captured before anything cleans it up.
     const msalApp = new msal.PublicClientApplication({
