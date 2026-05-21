@@ -12,6 +12,7 @@ Outlook Web Add-ins are small web applications that run embedded directly inside
 |--------|-------------|
 | [newsletter-manager](newsletter-manager/) | Automatically detects newsletters, moves them to a folder, and limits the number of emails kept per sender |
 | [unsubscribe-manager](unsubscribe-manager/) | Scans your inbox, groups newsletter senders by domain, and lets you unsubscribe with one click |
+| [paperless-ngx](paperless-ngx/) | Shows all attachments of the open email and sends selected ones directly to a Paperless-NGX instance |
 
 ## General Installation
 

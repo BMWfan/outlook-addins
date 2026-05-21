@@ -1,0 +1,782 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Paperless NGX</title>
+  <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet"/>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0f0f11;
+      --surface: #1a1a1f;
+      --surface2: #242429;
+      --border: #2e2e36;
+      --accent: #7c6fff;
+      --accent-dim: rgba(124,111,255,0.15);
+      --green: #4ade80;
+      --green-dim: rgba(74,222,128,0.12);
+      --red: #f87171;
+      --red-dim: rgba(248,113,113,0.12);
+      --yellow: #fbbf24;
+      --yellow-dim: rgba(251,191,36,0.12);
+      --text: #e8e8f0;
+      --muted: #6b6b7e;
+      --font-mono: 'DM Mono', monospace;
+      --font: 'DM Sans', sans-serif;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font);
+      font-size: 13px;
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    /* ── Header ── */
+    .header {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 14px 16px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+    .header-icon {
+      width: 28px; height: 28px;
+      background: var(--accent-dim);
+      border: 1px solid var(--accent);
+      border-radius: 6px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 14px;
+    }
+    .header h1 { font-size: 14px; font-weight: 600; letter-spacing: -0.3px; }
+    .version {
+      font-family: var(--font-mono);
+      font-size: 10px;
+      color: var(--muted);
+      background: var(--surface2);
+      padding: 2px 7px;
+      border-radius: 20px;
+      border: 1px solid var(--border);
+    }
+    .header-spacer { flex: 1; }
+    .btn-gear {
+      background: none;
+      border: none;
+      color: var(--muted);
+      cursor: pointer;
+      font-size: 16px;
+      padding: 2px 4px;
+      border-radius: 4px;
+      line-height: 1;
+      transition: color 0.15s;
+    }
+    .btn-gear:hover { color: var(--text); }
+    .btn-gear.active { color: var(--accent); }
+
+    /* ── Content ── */
+    .content { padding: 14px 16px; display: flex; flex-direction: column; gap: 12px; }
+
+    /* ── Cards ── */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+    }
+    .card-header {
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .card-title {
+      font-size: 10px;
+      font-weight: 500;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+    }
+    .badge {
+      font-family: var(--font-mono);
+      font-size: 10px;
+      background: var(--accent-dim);
+      color: var(--accent);
+      padding: 2px 7px;
+      border-radius: 20px;
+      border: 1px solid rgba(124,111,255,0.3);
+    }
+
+    /* ── Settings Card ── */
+    .settings-wrap { padding: 14px 16px 0; display: none; }
+    .settings-wrap.visible { display: block; }
+    .settings-section { padding: 12px 14px; border-bottom: 1px solid var(--border); }
+    .settings-section:last-child { border-bottom: none; }
+    .section-label {
+      font-size: 10px;
+      font-weight: 500;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      margin-bottom: 7px;
+    }
+    .input-row { display: flex; gap: 6px; align-items: center; }
+    input[type="text"], input[type="password"], input[type="url"] {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      color: var(--text);
+      font-family: var(--font-mono);
+      font-size: 12px;
+      padding: 8px 10px;
+      border-radius: 7px;
+      outline: none;
+      width: 100%;
+    }
+    input[type="text"]:focus,
+    input[type="password"]:focus,
+    input[type="url"]:focus { border-color: var(--accent); }
+    input::placeholder { color: var(--muted); }
+    .btn-icon {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      color: var(--muted);
+      width: 34px; height: 34px;
+      border-radius: 7px;
+      cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 13px;
+      flex-shrink: 0;
+      transition: all 0.1s;
+    }
+    .btn-icon:hover { color: var(--text); border-color: var(--accent); }
+    .cors-hint {
+      margin-top: 8px;
+      padding: 8px 10px;
+      background: var(--yellow-dim);
+      border: 1px solid rgba(251,191,36,0.25);
+      border-radius: 6px;
+      font-size: 10px;
+      color: var(--yellow);
+      line-height: 1.6;
+      font-family: var(--font-mono);
+    }
+    .btn-save {
+      width: 100%;
+      padding: 9px 12px;
+      background: var(--accent-dim);
+      border: 1px solid rgba(124,111,255,0.4);
+      color: var(--accent);
+      font-family: var(--font);
+      font-size: 12px;
+      font-weight: 500;
+      border-radius: 7px;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .btn-save:hover { background: rgba(124,111,255,0.25); }
+
+    /* ── Warning Box ── */
+    .warn-box {
+      padding: 10px 14px;
+      background: var(--yellow-dim);
+      border: 1px solid rgba(251,191,36,0.25);
+      border-radius: 8px;
+      font-size: 11px;
+      color: var(--yellow);
+      line-height: 1.5;
+      cursor: pointer;
+    }
+    .warn-box:hover { background: rgba(251,191,36,0.18); }
+
+    /* ── Attachment List ── */
+    .att-list { max-height: 300px; overflow-y: auto; }
+    .att-item {
+      padding: 9px 14px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      transition: background 0.1s;
+      cursor: pointer;
+      user-select: none;
+    }
+    .att-item:last-child { border-bottom: none; }
+    .att-item:hover { background: var(--surface2); }
+    .att-item.selected { background: var(--accent-dim); }
+    .att-cb {
+      width: 14px; height: 14px;
+      accent-color: var(--accent);
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+    .att-file-icon { font-size: 18px; flex-shrink: 0; line-height: 1; }
+    .att-info { flex: 1; min-width: 0; }
+    .att-name {
+      font-size: 12px;
+      font-weight: 500;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .att-meta { display: flex; gap: 6px; align-items: center; margin-top: 2px; }
+    .att-size { font-family: var(--font-mono); font-size: 10px; color: var(--muted); }
+    .att-type {
+      font-family: var(--font-mono);
+      font-size: 9px;
+      padding: 1px 5px;
+      border-radius: 3px;
+      border: 1px solid var(--border);
+      background: var(--surface2);
+      color: var(--muted);
+      text-transform: uppercase;
+    }
+
+    /* Select-all row */
+    .select-all-label {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      cursor: pointer;
+      margin-left: auto;
+    }
+    .select-all-label input[type="checkbox"] {
+      width: 13px; height: 13px;
+      accent-color: var(--accent);
+      cursor: pointer;
+    }
+    .select-all-text { font-size: 10px; color: var(--muted); }
+
+    /* ── Options ── */
+    .option-label {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      cursor: pointer;
+      padding: 2px 0;
+    }
+    .option-label input[type="checkbox"] {
+      width: 13px; height: 13px;
+      accent-color: var(--accent);
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+    .option-text { font-size: 12px; color: var(--muted); }
+
+    /* ── Upload Button ── */
+    .btn-upload {
+      width: 100%;
+      padding: 13px;
+      background: var(--accent);
+      border: none;
+      color: white;
+      border-radius: 8px;
+      font-family: var(--font);
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+      letter-spacing: -0.2px;
+    }
+    .btn-upload:hover:not(:disabled) { opacity: 0.88; transform: translateY(-1px); }
+    .btn-upload:active:not(:disabled) { transform: translateY(0); }
+    .btn-upload:disabled { opacity: 0.35; cursor: not-allowed; }
+
+    /* ── Progress ── */
+    .progress-item {
+      padding: 9px 14px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 9px;
+    }
+    .progress-item:last-child { border-bottom: none; }
+    .prog-file-icon { font-size: 15px; flex-shrink: 0; }
+    .prog-name {
+      flex: 1;
+      font-size: 12px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .prog-status { font-size: 13px; flex-shrink: 0; min-width: 18px; text-align: center; }
+    .prog-spinner {
+      display: inline-block;
+      width: 13px; height: 13px;
+      border: 2px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      vertical-align: middle;
+    }
+
+    /* ── Loading / Empty ── */
+    .loading {
+      display: flex; align-items: center; gap: 8px;
+      color: var(--muted); font-size: 12px;
+      padding: 20px 16px;
+    }
+    .spinner {
+      width: 16px; height: 16px;
+      border: 2px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      flex-shrink: 0;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .empty { padding: 28px 14px; text-align: center; color: var(--muted); font-size: 12px; }
+    .empty-icon { font-size: 30px; margin-bottom: 8px; }
+
+    /* ── Toast ── */
+    .toast {
+      position: fixed; bottom: 16px; left: 16px; right: 16px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 9px;
+      padding: 11px 14px;
+      display: flex; align-items: center; gap: 9px;
+      font-size: 12px;
+      transform: translateY(80px);
+      transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+      z-index: 999;
+    }
+    .toast.show { transform: translateY(0); }
+    .toast.success { border-color: rgba(74,222,128,0.4); }
+    .toast.error   { border-color: rgba(248,113,113,0.4); }
+    .toast-icon { font-size: 16px; }
+
+    /* ── Scrollbar ── */
+    ::-webkit-scrollbar { width: 4px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+  </style>
+</head>
+<body>
+
+<!-- Header -->
+<div class="header">
+  <div class="header-icon">📎</div>
+  <h1>Paperless NGX</h1>
+  <span class="version">v1.0</span>
+  <div class="header-spacer"></div>
+  <button class="btn-gear" id="gearBtn" onclick="toggleSettings()" title="Einstellungen">⚙</button>
+</div>
+
+<!-- Settings (collapsed by default) -->
+<div class="settings-wrap" id="settingsWrap">
+  <div class="card">
+    <div class="card-header">
+      <span class="card-title">Paperless Einstellungen</span>
+    </div>
+
+    <div class="settings-section">
+      <div class="section-label">Server URL</div>
+      <input type="url" id="serverUrl" placeholder="http://192.168.1.100:8000" autocomplete="off" spellcheck="false"/>
+    </div>
+
+    <div class="settings-section">
+      <div class="section-label">API Token</div>
+      <div class="input-row">
+        <input type="password" id="apiToken" placeholder="Token aus Paperless → Profil → API-Token" autocomplete="off" spellcheck="false"/>
+        <button class="btn-icon" onclick="toggleTokenVis()" title="Token ein-/ausblenden">👁</button>
+      </div>
+      <div class="cors-hint">
+        ⚠ CORS erforderlich — in der Paperless-Konfiguration setzen:<br>
+        PAPERLESS_CORS_ALLOWED_HOSTS=https://bmwfan.github.io
+      </div>
+    </div>
+
+    <div class="settings-section">
+      <button class="btn-save" onclick="saveSettings()">✓ Speichern</button>
+    </div>
+  </div>
+</div>
+
+<!-- Loading -->
+<div class="loading" id="loadingState">
+  <div class="spinner"></div>
+  <span>Lade Anhänge…</span>
+</div>
+
+<!-- Main content -->
+<div class="content" id="mainContent" style="display:none;">
+
+  <!-- No-settings warning -->
+  <div class="warn-box" id="noSettingsWarn" style="display:none;" onclick="toggleSettings()">
+    ⚙ Bitte zuerst Server-URL und API-Token hinterlegen — hier klicken.
+  </div>
+
+  <!-- No attachments -->
+  <div class="card" id="emptyCard" style="display:none;">
+    <div class="empty">
+      <div class="empty-icon">📭</div>
+      Diese E-Mail enthält keine Datei-Anhänge.
+    </div>
+  </div>
+
+  <!-- Attachments -->
+  <div class="card" id="attachmentsCard" style="display:none;">
+    <div class="card-header">
+      <span class="card-title">📎 Anhänge</span>
+      <span class="badge" id="attCount">0</span>
+      <label class="select-all-label" title="Alle auswählen / abwählen">
+        <input type="checkbox" id="selectAll" onchange="toggleSelectAll(this.checked)"/>
+        <span class="select-all-text">Alle</span>
+      </label>
+    </div>
+    <div class="att-list" id="attList"></div>
+  </div>
+
+  <!-- Options -->
+  <label class="option-label" id="optionsRow" style="display:none;">
+    <input type="checkbox" id="useSubjectAsTitle"/>
+    <span class="option-text">E-Mail-Betreff als Dokumenttitel verwenden</span>
+  </label>
+
+  <!-- Upload button -->
+  <button class="btn-upload" id="uploadBtn" onclick="uploadSelected()" disabled style="display:none;">
+    → An Paperless senden
+  </button>
+
+  <!-- Progress -->
+  <div class="card" id="progressCard" style="display:none;">
+    <div class="card-header">
+      <span class="card-title">Upload-Fortschritt</span>
+    </div>
+    <div id="progressList"></div>
+  </div>
+
+</div>
+
+<!-- Toast -->
+<div class="toast" id="toast">
+  <span class="toast-icon" id="toastIcon">✦</span>
+  <span id="toastMsg">–</span>
+</div>
+
+<script>
+// ══════════════════════════════════════════════════
+//  STATE
+// ══════════════════════════════════════════════════
+let attachments = [];
+let settings    = { server: '', token: '' };
+
+// ══════════════════════════════════════════════════
+//  UTILS
+// ══════════════════════════════════════════════════
+function esc(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function formatSize(bytes) {
+  if (bytes < 1024)        return bytes + ' B';
+  if (bytes < 1048576)     return (bytes / 1024).toFixed(1) + ' KB';
+  return (bytes / 1048576).toFixed(1) + ' MB';
+}
+
+function fileIcon(mime, name) {
+  const ext = (name || '').split('.').pop().toLowerCase();
+  const m   = (mime || '').toLowerCase();
+  if (m.includes('pdf') || ext === 'pdf')                                         return '📄';
+  if (m.includes('image') || /^(jpg|jpeg|png|gif|webp|svg|bmp|tiff)$/.test(ext)) return '🖼';
+  if (m.includes('word') || /^(doc|docx)$/.test(ext))                             return '📝';
+  if (m.includes('excel') || m.includes('spreadsheet') || /^(xls|xlsx|csv)$/.test(ext)) return '📊';
+  if (m.includes('zip') || m.includes('compress') || /^(zip|rar|7z|tar|gz)$/.test(ext)) return '🗜';
+  if (m.includes('text') || /^(txt|md|log)$/.test(ext))                           return '📃';
+  if (/^(eml|msg)$/.test(ext))                                                    return '📧';
+  return '📎';
+}
+
+function fileTypeLabel(mime, name) {
+  const ext = (name || '').split('.').pop().toUpperCase();
+  return ext || (mime || '').split('/').pop().toUpperCase() || '?';
+}
+
+// ══════════════════════════════════════════════════
+//  SETTINGS
+// ══════════════════════════════════════════════════
+function loadSettings() {
+  settings.server = localStorage.getItem('pls_server') || '';
+  settings.token  = localStorage.getItem('pls_token')  || '';
+  document.getElementById('serverUrl').value = settings.server;
+  document.getElementById('apiToken').value  = settings.token;
+}
+
+function saveSettings() {
+  const server = document.getElementById('serverUrl').value.trim().replace(/\/$/, '');
+  const token  = document.getElementById('apiToken').value.trim();
+  if (!server) { showToast('Bitte Server-URL eingeben.', 'error'); return; }
+  if (!token)  { showToast('Bitte API-Token eingeben.', 'error');  return; }
+  settings.server = server;
+  settings.token  = token;
+  localStorage.setItem('pls_server', server);
+  localStorage.setItem('pls_token',  token);
+  document.getElementById('noSettingsWarn').style.display = 'none';
+  toggleSettings();
+  updateUploadBtn();
+  showToast('Einstellungen gespeichert ✓', 'success');
+}
+
+function toggleSettings() {
+  const wrap = document.getElementById('settingsWrap');
+  const btn  = document.getElementById('gearBtn');
+  const open = wrap.classList.toggle('visible');
+  btn.classList.toggle('active', open);
+  if (open) document.getElementById('serverUrl').focus();
+}
+
+function toggleTokenVis() {
+  const inp = document.getElementById('apiToken');
+  inp.type = inp.type === 'password' ? 'text' : 'password';
+}
+
+// ══════════════════════════════════════════════════
+//  OFFICE INIT
+// ══════════════════════════════════════════════════
+Office.onReady(function(info) {
+  loadSettings();
+  if (info.host === Office.HostType.Outlook) {
+    loadAttachments();
+  } else {
+    showMain();
+    document.getElementById('emptyCard').style.display = 'block';
+  }
+});
+
+function showMain() {
+  document.getElementById('loadingState').style.display = 'none';
+  document.getElementById('mainContent').style.display  = 'flex';
+}
+
+// ══════════════════════════════════════════════════
+//  ATTACHMENTS
+// ══════════════════════════════════════════════════
+function loadAttachments() {
+  const raw = Office.context.mailbox.item.attachments || [];
+  attachments = raw.filter(a =>
+    a.attachmentType === Office.MailboxEnums.AttachmentType.File && !a.isInline
+  );
+  showMain();
+
+  if (attachments.length === 0) {
+    document.getElementById('emptyCard').style.display = 'block';
+    return;
+  }
+
+  if (!settings.server || !settings.token) {
+    document.getElementById('noSettingsWarn').style.display = 'block';
+    toggleSettings();
+  }
+
+  renderAttachments();
+}
+
+function renderAttachments() {
+  const list = document.getElementById('attList');
+  list.innerHTML = attachments.map((a, i) => `
+    <div class="att-item" id="att-row-${i}" onclick="toggleRow(${i})">
+      <input type="checkbox" class="att-cb" id="att-cb-${i}"
+             onclick="event.stopPropagation()" onchange="onCheckChange()"/>
+      <span class="att-file-icon">${fileIcon(a.contentType, a.name)}</span>
+      <div class="att-info">
+        <div class="att-name" title="${esc(a.name)}">${esc(a.name)}</div>
+        <div class="att-meta">
+          <span class="att-size">${formatSize(a.size)}</span>
+          <span class="att-type">${esc(fileTypeLabel(a.contentType, a.name))}</span>
+        </div>
+      </div>
+    </div>
+  `).join('');
+
+  document.getElementById('attCount').textContent = attachments.length;
+  document.getElementById('attachmentsCard').style.display = 'block';
+  document.getElementById('optionsRow').style.display      = 'flex';
+  document.getElementById('uploadBtn').style.display       = 'block';
+  updateUploadBtn();
+}
+
+function toggleRow(i) {
+  const cb = document.getElementById('att-cb-' + i);
+  cb.checked = !cb.checked;
+  onCheckChange();
+}
+
+function onCheckChange() {
+  updateSelectAll();
+  updateUploadBtn();
+  attachments.forEach((_, i) => {
+    const row = document.getElementById('att-row-' + i);
+    const cb  = document.getElementById('att-cb-'  + i);
+    if (row) row.classList.toggle('selected', cb.checked);
+  });
+}
+
+function toggleSelectAll(checked) {
+  attachments.forEach((_, i) => {
+    const cb = document.getElementById('att-cb-' + i);
+    if (cb) cb.checked = checked;
+  });
+  onCheckChange();
+}
+
+function updateSelectAll() {
+  const cbs         = attachments.map((_, i) => document.getElementById('att-cb-' + i)).filter(Boolean);
+  const allChecked  = cbs.every(cb => cb.checked);
+  const someChecked = cbs.some(cb  => cb.checked);
+  const sa          = document.getElementById('selectAll');
+  sa.checked        = allChecked;
+  sa.indeterminate  = someChecked && !allChecked;
+}
+
+function getSelected() {
+  return attachments.filter((_, i) => {
+    const cb = document.getElementById('att-cb-' + i);
+    return cb && cb.checked;
+  });
+}
+
+function updateUploadBtn() {
+  const btn   = document.getElementById('uploadBtn');
+  const sel   = getSelected();
+  const n     = sel.length;
+  const ready = n > 0 && !!settings.server && !!settings.token;
+  btn.disabled    = !ready;
+  btn.textContent = n === 0
+    ? '→ An Paperless senden'
+    : `→ ${n} Datei${n !== 1 ? 'en' : ''} an Paperless senden`;
+}
+
+// ══════════════════════════════════════════════════
+//  UPLOAD
+// ══════════════════════════════════════════════════
+function getAttachmentContent(id) {
+  return new Promise((resolve, reject) => {
+    if (typeof Office.context.mailbox.item.getAttachmentContentAsync !== 'function') {
+      reject(new Error('Nicht unterstützt – bitte Outlook aktualisieren (Mailbox-API 1.8 erforderlich).'));
+      return;
+    }
+    Office.context.mailbox.item.getAttachmentContentAsync(id, {}, result => {
+      if (result.status === Office.AsyncResultStatus.Succeeded) {
+        resolve(result.value);
+      } else {
+        reject(new Error(result.error?.message || 'Anhang konnte nicht geladen werden.'));
+      }
+    });
+  });
+}
+
+function base64ToBlob(b64, mime) {
+  const bin   = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return new Blob([bytes], { type: mime || 'application/octet-stream' });
+}
+
+function setProgStatus(rowEl, state, title) {
+  const el = rowEl.querySelector('.prog-status');
+  if (state === 'loading') {
+    el.innerHTML = '<span class="prog-spinner"></span>';
+  } else if (state === 'ok') {
+    el.innerHTML = `<span style="color:var(--green)" title="${esc(title||'')}">✓</span>`;
+  } else {
+    el.innerHTML = `<span style="color:var(--red)" title="${esc(title||'')}">✗</span>`;
+  }
+}
+
+async function uploadSingle(att, rowEl) {
+  setProgStatus(rowEl, 'loading');
+  try {
+    const content = await getAttachmentContent(att.id);
+    const blob    = base64ToBlob(content.content, att.contentType || 'application/octet-stream');
+
+    const fd = new FormData();
+    fd.append('document', blob, att.name);
+
+    if (document.getElementById('useSubjectAsTitle')?.checked) {
+      const subject = Office.context.mailbox.item.subject || '';
+      fd.append('title', subject ? `${subject} – ${att.name}` : att.name);
+    }
+
+    const url  = settings.server.replace(/\/$/, '') + '/api/documents/post_document/';
+    const resp = await fetch(url, {
+      method:  'POST',
+      headers: { 'Authorization': `Token ${settings.token}` },
+      body:    fd,
+    });
+
+    if (!resp.ok) {
+      let detail = `HTTP ${resp.status}`;
+      try { const t = await resp.text(); if (t) detail += ': ' + t.slice(0, 150); } catch (_) {}
+      throw new Error(detail);
+    }
+
+    setProgStatus(rowEl, 'ok', 'Erfolgreich hochgeladen');
+    return true;
+  } catch (e) {
+    setProgStatus(rowEl, 'error', e.message);
+    console.error('[PLS]', att.name, e.message);
+    return false;
+  }
+}
+
+async function uploadSelected() {
+  const selected = getSelected();
+  if (selected.length === 0) return;
+
+  const btn = document.getElementById('uploadBtn');
+  btn.disabled    = true;
+  btn.textContent = '↺ Hochladen…';
+
+  const progressCard = document.getElementById('progressCard');
+  const progressList = document.getElementById('progressList');
+  progressList.innerHTML = selected.map((a, i) => `
+    <div class="progress-item" id="prog-${i}">
+      <span class="prog-file-icon">${fileIcon(a.contentType, a.name)}</span>
+      <span class="prog-name" title="${esc(a.name)}">${esc(a.name)}</span>
+      <span class="prog-status">–</span>
+    </div>
+  `).join('');
+  progressCard.style.display = 'block';
+  progressCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+
+  let ok = 0, fail = 0;
+  for (let i = 0; i < selected.length; i++) {
+    const rowEl   = document.getElementById('prog-' + i);
+    const success = await uploadSingle(selected[i], rowEl);
+    success ? ok++ : fail++;
+  }
+
+  const n = selected.length;
+  btn.disabled    = false;
+  btn.textContent = `→ ${n} Datei${n !== 1 ? 'en' : ''} an Paperless senden`;
+
+  if      (fail === 0) showToast(`${ok} Datei${ok !== 1 ? 'en' : ''} erfolgreich hochgeladen ✦`, 'success');
+  else if (ok   === 0) showToast('Upload fehlgeschlagen – Server-URL, Token und CORS prüfen.', 'error');
+  else                 showToast(`${ok} erfolgreich, ${fail} fehlgeschlagen.`, 'error');
+}
+
+// ══════════════════════════════════════════════════
+//  TOAST
+// ══════════════════════════════════════════════════
+let toastTimer;
+function showToast(msg, type = 'success') {
+  const toast = document.getElementById('toast');
+  document.getElementById('toastMsg').textContent  = msg;
+  document.getElementById('toastIcon').textContent = type === 'success' ? '✦' : '✗';
+  toast.className = `toast ${type} show`;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => toast.classList.remove('show'), 4000);
+}
+</script>
+</body>
+</html>
