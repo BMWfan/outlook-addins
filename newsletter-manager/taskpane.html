@@ -561,6 +561,19 @@
     }
     .scan-inline select { padding: 5px 30px 5px 8px; font-size: 11px; }
     .scan-inline .btn { font-size: 11px; padding: 5px 12px; white-space: nowrap; flex-shrink: 0; }
+    .btn-load-more {
+      width: 100%;
+      padding: 9px;
+      background: var(--surface2);
+      border: none;
+      border-top: 1px solid var(--border);
+      color: var(--muted);
+      font-size: 11px;
+      cursor: pointer;
+      transition: background 0.1s, color 0.1s;
+    }
+    .btn-load-more:hover { background: var(--border); color: var(--text); }
+    .btn-load-more:disabled { opacity: 0.4; cursor: default; }
 
     /* Scrollbar */
     ::-webkit-scrollbar { width: 4px; }
@@ -603,8 +616,8 @@
     <div class="signals" id="signalsList"></div>
     <div id="nbSection" style="display:none;"></div>
     <div class="action-row" id="actionRow">
-      <button class="btn btn-confirm" onclick="confirmNewsletter()">✓ Ja, Newsletter</button>
-      <button class="btn btn-deny" onclick="denyNewsletter()">✗ Kein Newsletter</button>
+      <button class="btn btn-confirm" id="confirmBtn" onclick="confirmNewsletter()">✓ Ja, Newsletter</button>
+      <button class="btn btn-deny"    id="denyBtn"    onclick="denyNewsletter()">✗ Kein Newsletter</button>
     </div>
   </div>
 
@@ -1211,7 +1224,7 @@ function applyRule() {
   localStorage.setItem('nlm_rules', JSON.stringify(rules));
   scheduleSave();
 
-  document.getElementById('applyBtn').disabled = true;
+  setBusy(true);
   showToast(`Verschiebe Mails von "${currentEmail.senderName}"…`, 'success');
 
   // Create an Exchange Online server-side rule so future emails are moved automatically,
@@ -1220,6 +1233,7 @@ function applyRule() {
 
   const currentIntMsgId = Office.context.mailbox.item.internetMessageId || '';
   moveAllFromSender(currentEmail.sender, folderId, currentIntMsgId, (moved, skipped) => {
+    setBusy(false);
     renderRules();
     if (moved === 0) {
       showToast('Keine Mails konnten verschoben werden. Siehe Konsole (F12).', 'error');
@@ -1372,8 +1386,8 @@ function renderRules() {
 // Must be called from a user gesture (button click) so the auth dialog can open if needed.
 async function reapplyAllRules() {
   if (rules.length === 0) { showToast('Keine Regeln gespeichert.', 'error'); return; }
+  setBusy(true);
   const btn = document.getElementById('reapplyBtn');
-  btn.disabled = true;
   btn.textContent = '↺ Läuft…';
 
   // Update Exchange server-side rules to latest format (headerContains) while we're at it
@@ -1392,7 +1406,7 @@ async function reapplyAllRules() {
     });
   }
 
-  btn.disabled = false;
+  setBusy(false);
   btn.textContent = '↺ Alle anwenden';
   const skipNote = totalSkipped > 0 ? ` · ${totalSkipped} persönl. belassen` : '';
   showToast(totalMoved > 0
@@ -1412,7 +1426,9 @@ function deleteRule(i) {
 // ══════════════════════════════════════════════════
 //  ORDNER-SCANNER
 // ══════════════════════════════════════════════════
-let scannerFolderId = null;
+let scannerFolderId  = null;
+let nextScanUrl      = null;
+let currentScanMap   = {};
 
 async function scanFolder() {
   if (!getCachedToken()) {
@@ -1420,14 +1436,13 @@ async function scanFolder() {
     return;
   }
 
-  const btn = document.getElementById('scanBtn');
-  btn.disabled = true;
-  btn.textContent = '⟳';
+  setBusy(true);
+  nextScanUrl    = null;
+  currentScanMap = {};
   const resultsEl = document.getElementById('scannerResults');
   resultsEl.innerHTML = '<div class="rules-empty">Scanne…</div>';
 
   try {
-    // Convert the EWS item ID to a Graph REST ID to look up the current message
     const ewsId = Office.context.mailbox.item.itemId;
     const restId = Office.context.mailbox.convertToRestId(ewsId, Office.MailboxEnums.RestVersion.v2_0);
     const msg = await graphFetch(`/me/messages/${restId}?$select=parentFolderId`);
@@ -1436,54 +1451,76 @@ async function scanFolder() {
     const folder = await graphFetch(`/me/mailFolders/${scannerFolderId}?$select=displayName`);
     document.getElementById('scannerFolderLabel').textContent = folder.displayName;
 
-    // Fetch messages (up to 500, newest first)
-    let url = `/me/mailFolders/${scannerFolderId}/messages?$select=id,from,subject,internetMessageHeaders,bodyPreview&$top=50`;
-    let all = [];
-    let pages = 0;
-    while (url && pages < 10) {
-      const data = await graphFetch(url);
-      all = all.concat(data.value || []);
-      url = data['@odata.nextLink'] || null;
-      pages++;
-      resultsEl.innerHTML = `<div class="rules-empty">Scanne… ${all.length} E-Mails</div>`;
-    }
-
-    // Group newsletter mails by sender, skip already-handled senders
-    const handled = new Set(rules.map(r => r.sender.toLowerCase()));
-    const senderMap = {};
-    all.filter(m => looksLikeNewsletter(m)).forEach(m => {
-      const email = (m.from?.emailAddress?.address || '').toLowerCase();
-      if (!email || handled.has(email)) return;
-      if (!senderMap[email]) senderMap[email] = { email, name: m.from?.emailAddress?.name || email, count: 0 };
-      senderMap[email].count++;
-    });
-
-    renderScanResults(Object.values(senderMap).sort((a, b) => b.count - a.count));
+    nextScanUrl = `/me/mailFolders/${scannerFolderId}/messages?$select=id,from,subject,internetMessageHeaders,bodyPreview&$top=50`;
+    await fetchScanPage(resultsEl, true);
   } catch (e) {
     resultsEl.innerHTML = `<div class="rules-empty" style="color:var(--red)">Fehler: ${esc(e.message)}</div>`;
   } finally {
-    btn.disabled = false;
-    btn.textContent = '↺ Scan';
+    setBusy(false);
   }
+}
+
+async function loadMoreScan() {
+  if (!nextScanUrl) return;
+  setBusy(true);
+  const resultsEl = document.getElementById('scannerResults');
+  try {
+    await fetchScanPage(resultsEl, false);
+  } catch (e) {
+    showToast('Fehler beim Nachladen: ' + esc(e.message), 'error');
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function fetchScanPage(resultsEl, reset) {
+  const handled = new Set([
+    ...rules.map(r => r.sender.toLowerCase()),
+    ...Object.entries(overrides).filter(([, v]) => v.type === 'not-newsletter').map(([k]) => k),
+  ]);
+
+  let fetched = 0, pages = 0;
+  while (nextScanUrl && pages < 10) {
+    const data = await graphFetch(nextScanUrl);
+    const msgs  = data.value || [];
+    fetched += msgs.length;
+    nextScanUrl = data['@odata.nextLink'] || null;
+    pages++;
+
+    msgs.filter(m => looksLikeNewsletter(m)).forEach(m => {
+      const email = (m.from?.emailAddress?.address || '').toLowerCase();
+      if (!email || handled.has(email)) return;
+      if (!currentScanMap[email]) currentScanMap[email] = { email, name: m.from?.emailAddress?.name || email, count: 0 };
+      currentScanMap[email].count++;
+    });
+
+    resultsEl.innerHTML = `<div class="rules-empty">Scanne… ${fetched} E-Mails gelesen</div>`;
+  }
+
+  renderScanResults(Object.values(currentScanMap).sort((a, b) => b.count - a.count));
 }
 
 function renderScanResults(senders) {
   const el = document.getElementById('scannerResults');
-  if (senders.length === 0) {
-    el.innerHTML = '<div class="rules-empty">Keine unbekannten Newsletter ✓</div>';
-    return;
-  }
-  el.innerHTML = senders.map(s => `
-    <div class="scan-item">
-      <div class="scan-sender">
-        <div class="scan-name">${esc(s.name)}</div>
-        <div class="scan-email">${esc(s.email)}</div>
-      </div>
-      <div class="scan-count">${s.count}</div>
-      <button class="scan-process-btn" data-email="${esc(s.email)}" data-name="${esc(s.name)}"
-              onclick="toggleScanInline(this)" title="Regel anlegen">→</button>
-    </div>
-  `).join('');
+  const items = senders.length === 0
+    ? '<div class="rules-empty">Keine unbekannten Newsletter ✓</div>'
+    : senders.map(s => `
+        <div class="scan-item">
+          <div class="scan-sender">
+            <div class="scan-name">${esc(s.name)}</div>
+            <div class="scan-email">${esc(s.email)}</div>
+          </div>
+          <div class="scan-count">${s.count}</div>
+          <button class="scan-process-btn" data-email="${esc(s.email)}" data-name="${esc(s.name)}"
+                  onclick="toggleScanInline(this)" title="Regel anlegen">→</button>
+        </div>
+      `).join('');
+
+  const more = nextScanUrl
+    ? `<button class="btn-load-more" onclick="loadMoreScan()">↓ Weitere 500 laden</button>`
+    : '';
+
+  el.innerHTML = items + more;
 }
 
 function toggleScanInline(btn) {
@@ -1546,6 +1583,18 @@ function applyScanRule(email, name, folderId, folderName, itemEl) {
     const skipNote = skipped > 0 ? ` · ${skipped} persönl. belassen` : '';
     showToast(`${moved} Mail${moved !== 1 ? 's' : ''} von "${name}" nach "${folderName}" verschoben${skipNote} ✦`, 'success');
   });
+}
+
+// ══════════════════════════════════════════════════
+//  BUSY STATE
+// ══════════════════════════════════════════════════
+function setBusy(busy) {
+  ['applyBtn', 'reapplyBtn', 'scanBtn', 'confirmBtn', 'denyBtn'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.disabled = busy;
+  });
+  const more = document.querySelector('.btn-load-more');
+  if (more) more.disabled = busy;
 }
 
 // ══════════════════════════════════════════════════
