@@ -1133,12 +1133,14 @@ async function testConnection() {
       ok(`Server erreichbar (HTTP ${resp.status})`);
     } catch (e) {
       err(`Kein Zugriff auf Server: ${e.message}`);
-      err('Prüfliste:');
-      err('① Server-URL direkt im Browser aufrufen → erreichbar?');
-      err('② PAPERLESS_CORS_ALLOWED_HOSTS=https://bmwfan.github.io gesetzt?');
-      err('③ PAPERLESS_CORS_ALLOW_CREDENTIALS=true gesetzt? (Pflicht für mTLS)');
-      err('④ Reverse-Proxy (nginx/Caddy): mTLS optional statt required?');
-      err('⑤ Browser-Zertifikat für mTLS im Zertifikatspeicher vorhanden?');
+      steps.push('');
+      steps.push('Mögliche Ursachen:');
+      steps.push('  ① CORS nicht konfiguriert (häufigste Ursache)');
+      steps.push('     PAPERLESS_CORS_ALLOWED_HOSTS=https://bmwfan.github.io');
+      steps.push('     PAPERLESS_CORS_ALLOW_CREDENTIALS=true');
+      steps.push('     → Paperless danach neu starten');
+      steps.push('  ② Reverse-Proxy blockiert (mTLS: optional statt required)');
+      steps.push('  ③ Server-URL falsch oder Server nicht erreichbar');
       throw e;
     }
 
