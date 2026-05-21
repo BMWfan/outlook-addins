@@ -1,38 +1,57 @@
 # Newsletter Manager
 
-Outlook Web Add-in that automatically detects newsletters, moves them into a chosen folder, and keeps only the desired number of emails per sender.
+Outlook Add-in that automatically detects newsletters, moves them into a chosen folder, and creates server-side Exchange rules so future emails are processed even when Outlook is closed.
 
-> For general Outlook add-in installation instructions, see the [main README](../README.md).
+> For installation instructions, see the [main README](../README.md).
 
 ## Features
 
-- **Automatic newsletter detection** on every email you open, based on 7 signals
-- **Confirm or reject** with one click — you stay in control
+- **Automatic newsletter detection** on every email you open, based on email headers, content signals, and a trained Naive Bayes text classifier
+- **Confirm or reject** with one click — corrections are remembered per sender
 - **Choose a target folder** from your existing folders or create a new one directly in the panel
-- **Set a limit** (1–50) — e.g. keep only the last 5 emails from REWE
-- **Save rules** — stored locally and automatically suggested the next time you open an email from the same sender
-- **Auto-cleanup** — older emails from the same sender in the target folder are moved to the trash
+- **Exchange server-side rule** created automatically — future newsletters from the same address are moved without the add-in being open
+- **Bulk move** — all existing emails from that sender are moved at once; personal emails from the same address are protected via header checks
+- **Re-apply all rules** — processes newly arrived newsletters across all saved senders in one click and updates existing Exchange rules to the latest format
+- **Folder Scanner** — scans the current folder for unknown newsletter senders not yet covered by a rule, grouped by sender with email count
+- **Learned senders** — stores your confirm/deny decisions and applies them automatically on the next open
+
+## How it works
+
+### Newsletter detection
+
+An email is classified as a newsletter when it matches any of these signals:
+
+| Signal | What is checked |
+|--------|-----------------|
+| `List-Unsubscribe` header | Present in the email's internet message headers |
+| `List-Id` / `List-Post` / other list headers | Any RFC 2369 mailing list header present |
+| `Precedence: bulk` / `list` | Present in the email's internet message headers |
+| Subject keywords | newsletter, angebot, deal, rabatt, %, sale, promo, … |
+| Body keywords | unsubscribe, abmelden, opt-out, newsletter, … |
+| Naive Bayes classifier | Text-based ML trained on your own confirm/deny feedback (active after 5 examples per class) |
+
+### Exchange server-side rule
+
+When you apply a rule, the add-in creates an inbox rule via Graph API with these conditions:
+
+```
+senderContains: [sender address]
+headerContains: ['List-Unsubscribe', 'List-Id']
+```
+
+Using `headerContains` (rather than body keywords) ensures that personal emails from the same sender address are never moved — only emails sent via bulk-mailing infrastructure (Mailchimp, SendGrid, etc.) carry these headers.
+
+### Folder Scanner
+
+Click **↺ Scan** to scan the folder of your currently open email. The scanner fetches up to 500 messages, runs the same header-based detection, and shows each unknown newsletter sender once with the number of matching emails. From there you can apply a rule directly inline.
 
 ## Usage
 
-1. Open an email in Outlook Web
+1. Open an email in Outlook
 2. Click **"Newsletter Manager"** in the toolbar
-3. The task pane shows the analysis with all detected signals
-4. Confirm as newsletter → choose a folder → set a limit → **"Apply rule & move email"**
-
-## Newsletter Detection
-
-An email is classified as a newsletter when **at least 2 of the following 7 signals** match:
-
-| Signal | What is checked |
-|--------|----------------|
-| List-Unsubscribe Header | `list-unsubscribe` present in the email body |
-| Unsubscribe link | Body contains "abmelden", "unsubscribe", or "abbestellen" |
-| Bulk sender | Sender address contains newsletter, noreply, no-reply, info@, or marketing |
-| "Newsletter" in subject | Subject contains newsletter, angebot, deal, %, or rabatt |
-| Promo keywords | Body contains angebot, rabatt, jetzt kaufen, jetzt bestellen, or nur heute |
-| No-reply sender | Sender address contains noreply, no-reply, or donotreply |
-| HTML-only email | Body longer than 2,000 characters and contains a `<table>` element |
+3. The task pane analyses the email and shows detected signals
+4. Confirm as newsletter → choose a target folder → click **"Regel anwenden & E-Mail verschieben"**
+5. Use **↺ Alle anwenden** periodically to process newly arrived newsletters across all rules
 
 ## File structure
 
@@ -47,19 +66,16 @@ newsletter-manager/
 
 ## Technical details
 
-- Communicates with Exchange via **EWS** (`makeEwsRequestAsync`) for folder listing, moving, and deleting emails
-- Folders are loaded on startup via EWS `FindFolder`; if EWS is unavailable, a demo fallback is shown
-- Deleted emails are moved to **"Deleted Items"** (`DeleteType="MoveToDeletedItems"`), not permanently deleted
-- Rules are stored in the browser's **LocalStorage** under the key `nlm_rules` (device-specific, no cloud sync)
+- Communicates with Microsoft 365 via the **Graph API** (`https://graph.microsoft.com/v1.0`)
+- Authentication via **OAuth 2.0 / MSAL** using an Office dialog-based auth flow
+- Exchange server-side rules are created/updated via `PATCH /me/mailFolders/inbox/messageRules/{id}`
+- The current folder is resolved by converting the Office.js EWS item ID to a Graph REST ID via `convertToRestId`
+- Rules and learned sender overrides are stored in **LocalStorage** (device-specific, no cloud sync)
+- The Naive Bayes classifier state (vocabulary, class counts) is also stored in LocalStorage
 
-## Notes
+## Required permissions
 
-- Requires the **ReadWriteMailbox** permission to move and delete emails
-- Primarily designed for Outlook Web; EWS functionality may be limited in Outlook Desktop
-
-## Ideas for future improvements
-
-- Claude AI API integration for smarter newsletter detection
-- Export / import rules as JSON
-- Automatically process the entire inbox on load
-- Statistics: how many emails have been cleaned up?
+| Permission | Why |
+|------------|-----|
+| `Mail.ReadWrite` | Read and move emails |
+| `MailboxSettings.ReadWrite` | Create and update inbox rules |
