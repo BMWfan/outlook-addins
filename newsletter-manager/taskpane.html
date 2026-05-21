@@ -469,6 +469,99 @@
     .nb-word.not-nl { color: var(--red);  background: var(--red-dim);   border-color: rgba(248,113,113,0.3); }
     .nb-sep { color: var(--border); }
 
+    /* ── Ordner-Scanner ── */
+    .scanner-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+    }
+    .scanner-header {
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .scanner-title {
+      font-size: 10px;
+      font-weight: 500;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+    }
+    .scanner-folder-label {
+      flex: 1;
+      font-family: var(--font-mono);
+      font-size: 10px;
+      color: var(--accent);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .btn-scan {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      color: var(--muted);
+      font-size: 11px;
+      padding: 3px 10px;
+      border-radius: 20px;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .btn-scan:hover { color: var(--text); background: var(--border); }
+    .btn-scan:disabled { opacity: 0.5; cursor: default; }
+    #scannerResults { max-height: 220px; overflow-y: auto; }
+    .scan-item {
+      padding: 8px 14px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+      transition: background 0.1s;
+    }
+    .scan-item:last-child { border-bottom: none; }
+    .scan-item:hover { background: var(--surface2); }
+    .scan-sender { flex: 1; min-width: 0; }
+    .scan-name { font-size: 12px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .scan-email { font-family: var(--font-mono); font-size: 10px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .scan-count {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      font-weight: 500;
+      color: var(--accent);
+      background: var(--accent-dim);
+      border: 1px solid rgba(124,111,255,0.3);
+      border-radius: 10px;
+      padding: 1px 8px;
+      min-width: 28px;
+      text-align: center;
+    }
+    .scan-process-btn {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      color: var(--muted);
+      width: 26px; height: 26px;
+      border-radius: 6px;
+      cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 13px;
+      flex-shrink: 0;
+      transition: all 0.1s;
+    }
+    .scan-process-btn:hover,
+    .scan-process-btn.active { color: var(--accent); border-color: var(--accent); background: var(--accent-dim); }
+    .scan-inline {
+      width: 100%;
+      display: flex;
+      gap: 6px;
+      align-items: center;
+      padding-bottom: 4px;
+    }
+    .scan-inline select { padding: 5px 30px 5px 8px; font-size: 11px; }
+    .scan-inline .btn { font-size: 11px; padding: 5px 12px; white-space: nowrap; flex-shrink: 0; }
+
     /* Scrollbar */
     ::-webkit-scrollbar { width: 4px; }
     ::-webkit-scrollbar-track { background: transparent; }
@@ -556,6 +649,18 @@
   <button class="btn-apply" id="applyBtn" style="display:none;" onclick="applyRule()">
     ✦ Regel anwenden &amp; E-Mail verschieben
   </button>
+
+  <!-- Ordner-Scanner -->
+  <div class="scanner-card">
+    <div class="scanner-header">
+      <span class="scanner-title">Ordner-Scanner</span>
+      <span class="scanner-folder-label" id="scannerFolderLabel"></span>
+      <button class="btn-scan" id="scanBtn" onclick="scanFolder()">↺ Scan</button>
+    </div>
+    <div id="scannerResults">
+      <div class="rules-empty">Scannt den aktuellen Ordner nach unbekannten Newsletter-Absendern.</div>
+    </div>
+  </div>
 
   <!-- Saved Rules + Learned Senders -->
   <div class="rules-card">
@@ -1125,12 +1230,10 @@ async function createExchangeRule(sender, senderName, folderId) {
       isEnabled:   true,
       conditions:  {
         senderContains: [sender],
-        // Require a newsletter signal in subject or body so personal emails
-        // from the same address are not moved.
-        bodyOrSubjectContains: [
-          'unsubscribe','abmelden','abbestellen','newsletter','opt-out','opt out',
-          'aus dem verteiler','no longer receive','list-unsubscribe','abonnement'
-        ]
+        // Use mailing-list headers instead of body keywords. These headers are set
+        // by bulk-sending infrastructure (Mailchimp, SendGrid, etc.) and are absent
+        // in personal emails — even when both come from the same address.
+        headerContains: ['List-Unsubscribe', 'List-Id']
       },
       actions:     { moveToFolder: folderId }
     });
@@ -1285,6 +1388,144 @@ function deleteRule(i) {
   localStorage.setItem('nlm_rules', JSON.stringify(rules));
   renderRules();
   showToast('Regel gelöscht.', 'error');
+}
+
+// ══════════════════════════════════════════════════
+//  ORDNER-SCANNER
+// ══════════════════════════════════════════════════
+let scannerFolderId = null;
+
+async function scanFolder() {
+  if (!getCachedToken()) {
+    openAuthDialog(() => scanFolder());
+    return;
+  }
+
+  const btn = document.getElementById('scanBtn');
+  btn.disabled = true;
+  btn.textContent = '⟳';
+  const resultsEl = document.getElementById('scannerResults');
+  resultsEl.innerHTML = '<div class="rules-empty">Scanne…</div>';
+
+  try {
+    // Convert the EWS item ID to a Graph REST ID to look up the current message
+    const ewsId = Office.context.mailbox.item.itemId;
+    const restId = Office.context.mailbox.convertToRestId(ewsId, Office.MailboxEnums.RestVersion.v2_0);
+    const msg = await graphFetch(`/me/messages/${restId}?$select=parentFolderId`);
+    scannerFolderId = msg.parentFolderId;
+
+    const folder = await graphFetch(`/me/mailFolders/${scannerFolderId}?$select=displayName`);
+    document.getElementById('scannerFolderLabel').textContent = folder.displayName;
+
+    // Fetch messages (up to 500, newest first)
+    let url = `/me/mailFolders/${scannerFolderId}/messages?$select=id,from,subject,internetMessageHeaders,bodyPreview&$top=50`;
+    let all = [];
+    let pages = 0;
+    while (url && pages < 10) {
+      const data = await graphFetch(url);
+      all = all.concat(data.value || []);
+      url = data['@odata.nextLink'] || null;
+      pages++;
+      resultsEl.innerHTML = `<div class="rules-empty">Scanne… ${all.length} E-Mails</div>`;
+    }
+
+    // Group newsletter mails by sender, skip already-handled senders
+    const handled = new Set(rules.map(r => r.sender.toLowerCase()));
+    const senderMap = {};
+    all.filter(m => looksLikeNewsletter(m)).forEach(m => {
+      const email = (m.from?.emailAddress?.address || '').toLowerCase();
+      if (!email || handled.has(email)) return;
+      if (!senderMap[email]) senderMap[email] = { email, name: m.from?.emailAddress?.name || email, count: 0 };
+      senderMap[email].count++;
+    });
+
+    renderScanResults(Object.values(senderMap).sort((a, b) => b.count - a.count));
+  } catch (e) {
+    resultsEl.innerHTML = `<div class="rules-empty" style="color:var(--red)">Fehler: ${esc(e.message)}</div>`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '↺ Scan';
+  }
+}
+
+function renderScanResults(senders) {
+  const el = document.getElementById('scannerResults');
+  if (senders.length === 0) {
+    el.innerHTML = '<div class="rules-empty">Keine unbekannten Newsletter ✓</div>';
+    return;
+  }
+  el.innerHTML = senders.map(s => `
+    <div class="scan-item">
+      <div class="scan-sender">
+        <div class="scan-name">${esc(s.name)}</div>
+        <div class="scan-email">${esc(s.email)}</div>
+      </div>
+      <div class="scan-count">${s.count}</div>
+      <button class="scan-process-btn" data-email="${esc(s.email)}" data-name="${esc(s.name)}"
+              onclick="toggleScanInline(this)" title="Regel anlegen">→</button>
+    </div>
+  `).join('');
+}
+
+function toggleScanInline(btn) {
+  const email = btn.dataset.email;
+  const name  = btn.dataset.name;
+  const item  = btn.closest('.scan-item');
+  const existing = item.querySelector('.scan-inline');
+  if (existing) {
+    existing.remove();
+    btn.classList.remove('active');
+    return;
+  }
+  btn.classList.add('active');
+
+  const inline = document.createElement('div');
+  inline.className = 'scan-inline';
+
+  const select = document.createElement('select');
+  const populateSelect = () => {
+    select.innerHTML = folders.map(f => `<option value="${esc(f.id)}">${esc(f.displayName)}</option>`).join('');
+    if (defaultFolder) select.value = defaultFolder.id;
+  };
+  if (folders.length > 0) {
+    populateSelect();
+  } else {
+    select.innerHTML = '<option value="">Laden…</option>';
+    if (getCachedToken()) {
+      loadFolders().then(populateSelect);
+    } else {
+      openAuthDialog(() => loadFolders().then(populateSelect));
+    }
+  }
+
+  const applyBtn = document.createElement('button');
+  applyBtn.className = 'btn btn-confirm';
+  applyBtn.textContent = '✓ Anwenden';
+  applyBtn.onclick = () => {
+    const folderId   = select.value;
+    const folderObj  = folders.find(f => f.id === folderId);
+    const folderName = folderObj?.displayName || folderId;
+    if (!folderId) { showToast('Bitte Ordner wählen.', 'error'); return; }
+    applyScanRule(email, name, folderId, folderName, item);
+  };
+
+  inline.appendChild(select);
+  inline.appendChild(applyBtn);
+  item.appendChild(inline);
+}
+
+function applyScanRule(email, name, folderId, folderName, itemEl) {
+  const rule = { sender: email, senderName: name, folderId, folderName };
+  const idx  = rules.findIndex(r => r.sender === email);
+  if (idx >= 0) rules[idx] = rule; else rules.push(rule);
+  localStorage.setItem('nlm_rules', JSON.stringify(rules));
+  renderRules();
+  createExchangeRule(email, name, folderId);
+  itemEl.remove();
+  moveAllFromSender(email, folderId, '', (moved, skipped) => {
+    const skipNote = skipped > 0 ? ` · ${skipped} persönl. belassen` : '';
+    showToast(`${moved} Mail${moved !== 1 ? 's' : ''} von "${name}" nach "${folderName}" verschoben${skipNote} ✦`, 'success');
+  });
 }
 
 // ══════════════════════════════════════════════════
