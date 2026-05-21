@@ -1363,6 +1363,11 @@ async function reapplyAllRules() {
   btn.disabled = true;
   btn.textContent = '↺ Läuft…';
 
+  // Update Exchange server-side rules to latest format (headerContains) while we're at it
+  for (const rule of rules) {
+    createExchangeRule(rule.sender, rule.senderName, rule.folderId);
+  }
+
   let totalMoved = 0, totalSkipped = 0;
   for (const rule of rules) {
     await new Promise(resolve => {
