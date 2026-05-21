@@ -1133,7 +1133,12 @@ async function testConnection() {
       ok(`Server erreichbar (HTTP ${resp.status})`);
     } catch (e) {
       err(`Kein Zugriff auf Server: ${e.message}`);
-      err('→ CORS fehlt, mTLS-Zertifikat nicht akzeptiert, oder Server nicht erreichbar');
+      err('Prüfliste:');
+      err('① Server-URL direkt im Browser aufrufen → erreichbar?');
+      err('② PAPERLESS_CORS_ALLOWED_HOSTS=https://bmwfan.github.io gesetzt?');
+      err('③ PAPERLESS_CORS_ALLOW_CREDENTIALS=true gesetzt? (Pflicht für mTLS)');
+      err('④ Reverse-Proxy (nginx/Caddy): mTLS optional statt required?');
+      err('⑤ Browser-Zertifikat für mTLS im Zertifikatspeicher vorhanden?');
       throw e;
     }
 
