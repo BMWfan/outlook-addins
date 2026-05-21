@@ -530,7 +530,8 @@
     <div class="settings-section">
       <div class="cors-hint">
         ⚠ CORS erforderlich — in der Paperless-Konfiguration setzen:<br>
-        PAPERLESS_CORS_ALLOWED_HOSTS=https://bmwfan.github.io
+        PAPERLESS_CORS_ALLOWED_HOSTS=https://bmwfan.github.io<br>
+        PAPERLESS_CORS_ALLOW_CREDENTIALS=true
       </div>
     </div>
 
@@ -683,9 +684,10 @@ async function login() {
 
   try {
     const resp = await fetch(`${server}/api/token/`, {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ username: user, password: pass }),
+      method:      'POST',
+      credentials: 'include',
+      headers:     { 'Content-Type': 'application/json' },
+      body:        JSON.stringify({ username: user, password: pass }),
     });
 
     if (!resp.ok) {
@@ -983,9 +985,10 @@ async function uploadSingle(att, rowEl) {
 
     const url  = settings.server.replace(/\/$/, '') + '/api/documents/post_document/';
     const resp = await fetch(url, {
-      method:  'POST',
-      headers: { 'Authorization': `Token ${settings.token}` },
-      body:    fd,
+      method:      'POST',
+      credentials: 'include',
+      headers:     { 'Authorization': `Token ${settings.token}` },
+      body:        fd,
     });
 
     if (!resp.ok) {
