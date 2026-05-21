@@ -504,6 +504,9 @@
              autocomplete="off" spellcheck="false" oninput="onServerUrlChange()"/>
       <button class="btn-save" id="saveUrlBtn" onclick="saveServerUrl()"
               style="margin-top:8px;display:none;">URL aktualisieren</button>
+      <button class="btn-test" id="testBtn" onclick="testConnection()"
+              style="margin-top:8px;display:none;">⚡ Verbindung testen</button>
+      <div class="test-result" id="testResult"></div>
     </div>
 
     <!-- Login form (shown when NOT authenticated) -->
@@ -562,10 +565,6 @@
           </div>
           <button class="btn-logout" onclick="logout()">Abmelden</button>
         </div>
-        <button class="btn-test" id="testBtn" onclick="testConnection()" style="margin-top:8px;">
-          ⚡ Verbindung testen
-        </button>
-        <div class="test-result" id="testResult"></div>
       </div>
     </div>
 
@@ -690,6 +689,7 @@ function loadSettings() {
   settings.token    = localStorage.getItem('pls_token')    || '';
   settings.username = localStorage.getItem('pls_username') || '';
   document.getElementById('serverUrl').value = settings.server;
+  onServerUrlChange();
   updateAuthState();
 }
 
@@ -698,6 +698,8 @@ function onServerUrlChange() {
   const entered = document.getElementById('serverUrl').value.trim().replace(/\/$/, '');
   document.getElementById('saveUrlBtn').style.display =
     (entered !== settings.server) ? 'block' : 'none';
+  document.getElementById('testBtn').style.display = entered ? 'block' : 'none';
+  document.getElementById('testResult').style.display = 'none';
 }
 
 function saveServerUrl() {
@@ -815,6 +817,7 @@ function toggleSettings() {
   const btn  = document.getElementById('gearBtn');
   const open = wrap.classList.toggle('visible');
   btn.classList.toggle('active', open);
+  if (open) document.getElementById('noSettingsWarn').style.display = 'none';
   if (open && !settings.token) {
     const focus = document.getElementById('username').value
       ? document.getElementById('password')
