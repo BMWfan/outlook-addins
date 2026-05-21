@@ -252,6 +252,45 @@
     }
     .advanced-section.open { display: block; }
 
+    /* ── Connection test ── */
+    .btn-test {
+      width: 100%;
+      padding: 7px 12px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      color: var(--muted);
+      font-family: var(--font);
+      font-size: 11px;
+      border-radius: 7px;
+      cursor: pointer;
+      transition: all 0.15s;
+      text-align: left;
+    }
+    .btn-test:hover:not(:disabled) { border-color: var(--accent); color: var(--text); }
+    .btn-test:disabled { opacity: 0.5; cursor: not-allowed; }
+    .test-result {
+      margin-top: 7px;
+      font-size: 10px;
+      font-family: var(--font-mono);
+      line-height: 1.6;
+      display: none;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+    .test-result.ok    { color: var(--green); }
+    .test-result.error { color: var(--red); }
+
+    /* ── Progress error text ── */
+    .prog-error {
+      width: 100%;
+      font-size: 10px;
+      font-family: var(--font-mono);
+      color: var(--red);
+      padding: 2px 0 4px 32px;
+      line-height: 1.4;
+      word-break: break-all;
+    }
+
     /* ── CORS hint ── */
     .cors-hint {
       padding: 8px 10px;
@@ -523,6 +562,10 @@
           </div>
           <button class="btn-logout" onclick="logout()">Abmelden</button>
         </div>
+        <button class="btn-test" id="testBtn" onclick="testConnection()" style="margin-top:8px;">
+          ⚡ Verbindung testen
+        </button>
+        <div class="test-result" id="testResult"></div>
       </div>
     </div>
 
@@ -963,11 +1006,25 @@ function base64ToBlob(b64, mime) {
   return new Blob([bytes], { type: mime || 'application/octet-stream' });
 }
 
-function setProgStatus(rowEl, state, title) {
+function setProgStatus(rowEl, state, msg) {
   const el = rowEl.querySelector('.prog-status');
-  if      (state === 'loading') el.innerHTML = '<span class="prog-spinner"></span>';
-  else if (state === 'ok')      el.innerHTML = `<span style="color:var(--green)" title="${esc(title||'')}">✓</span>`;
-  else                          el.innerHTML = `<span style="color:var(--red)"   title="${esc(title||'')}">✗</span>`;
+  if (state === 'loading') {
+    el.innerHTML = '<span class="prog-spinner"></span>';
+    return;
+  }
+  if (state === 'ok') {
+    el.innerHTML = `<span style="color:var(--green)">✓</span>`;
+    return;
+  }
+  // error — show ✗ and render error text below the filename
+  el.innerHTML = `<span style="color:var(--red)">✗</span>`;
+  let errEl = rowEl.querySelector('.prog-error');
+  if (!errEl) {
+    errEl = document.createElement('div');
+    errEl.className = 'prog-error';
+    rowEl.appendChild(errEl);
+  }
+  errEl.textContent = msg || 'Unbekannter Fehler';
 }
 
 async function uploadSingle(att, rowEl) {
@@ -1044,6 +1101,66 @@ async function uploadSelected() {
   if      (fail === 0) showToast(`${ok} Datei${ok !== 1 ? 'en' : ''} erfolgreich hochgeladen ✦`, 'success');
   else if (ok   === 0) showToast('Upload fehlgeschlagen – Server, Login und CORS prüfen.', 'error');
   else                 showToast(`${ok} erfolgreich, ${fail} fehlgeschlagen.`, 'error');
+}
+
+// ══════════════════════════════════════════════════
+//  CONNECTION TEST
+// ══════════════════════════════════════════════════
+async function testConnection() {
+  const btn    = document.getElementById('testBtn');
+  const resEl  = document.getElementById('testResult');
+  btn.disabled = true;
+  btn.textContent = '⚡ Teste…';
+  resEl.className = 'test-result';
+  resEl.style.display = 'none';
+
+  const steps = [];
+  const ok  = (msg) => steps.push('✓ ' + msg);
+  const err = (msg) => steps.push('✗ ' + msg);
+
+  try {
+    // Step 1: basic reachability + CORS
+    let resp;
+    try {
+      resp = await fetch(`${settings.server.replace(/\/$/, '')}/api/`, {
+        method:      'GET',
+        credentials: 'include',
+        headers:     { 'Authorization': `Token ${settings.token}` },
+      });
+      ok(`Server erreichbar (HTTP ${resp.status})`);
+    } catch (e) {
+      err(`Kein Zugriff auf Server: ${e.message}`);
+      err('→ CORS fehlt, mTLS-Zertifikat nicht akzeptiert, oder Server nicht erreichbar');
+      throw e;
+    }
+
+    // Step 2: auth check
+    if (resp.status === 401 || resp.status === 403) {
+      err(`Authentifizierung fehlgeschlagen (HTTP ${resp.status})`);
+      err('→ Token ungültig oder abgelaufen');
+    } else if (resp.ok) {
+      ok('Authentifizierung erfolgreich');
+    } else {
+      err(`Unerwarteter Status: HTTP ${resp.status}`);
+    }
+
+    // Step 3: CORS credentials header check
+    const allowCreds = resp.headers.get('Access-Control-Allow-Credentials');
+    const allowOrigin = resp.headers.get('Access-Control-Allow-Origin');
+    if (allowOrigin) ok(`CORS Origin: ${allowOrigin}`);
+    else             err('Access-Control-Allow-Origin Header fehlt (CORS nicht konfiguriert)');
+    if (allowCreds === 'true') ok('CORS Credentials: true');
+    else                       err('Access-Control-Allow-Credentials fehlt → mTLS-Zertifikat wird blockiert');
+
+  } catch (_) {
+    // already logged above
+  }
+
+  resEl.textContent = steps.join('\n');
+  resEl.className   = steps.some(s => s.startsWith('✗')) ? 'test-result error' : 'test-result ok';
+  resEl.style.display = 'block';
+  btn.disabled = false;
+  btn.textContent = '⚡ Verbindung testen';
 }
 
 // ══════════════════════════════════════════════════
