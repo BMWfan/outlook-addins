@@ -713,6 +713,12 @@ let rules         = JSON.parse(localStorage.getItem('nlm_rules')          || '[]
 let overrides     = JSON.parse(localStorage.getItem('nlm_overrides')      || '{}');
 let defaultFolder = JSON.parse(localStorage.getItem('nlm_default_folder') || 'null');
 
+// Mailbox sync — extended property stored directly in the user's Exchange mailbox,
+// so settings roam across all browsers and devices automatically.
+const EXT_PROP_ID   = 'String {b3c4d5e6-f7a8-9012-bcde-f12345678902} Name NlmSettings';
+let mailboxLoaded   = false;
+let saveTimer;
+
 // Newsletter-Erkennungs-Signale
 const NEWSLETTER_SIGNALS = [
   { label: 'List-Unsubscribe Header',  key: 'unsubscribe_header' },
@@ -762,6 +768,7 @@ function saveNbState(vocab, totals, counts) {
   localStorage.setItem('nlm_vocab',        JSON.stringify(vocab));
   localStorage.setItem('nlm_totals',       JSON.stringify(totals));
   localStorage.setItem('nlm_class_counts', JSON.stringify(counts));
+  scheduleSave();
 }
 
 function trainClassifier(words, isNl) {
@@ -852,6 +859,7 @@ Office.onReady(function(info) {
   if (info.host === Office.HostType.Outlook) {
     loadCurrentEmail();
     renderRules();
+    if (getCachedToken()) ensureMailboxLoaded();
   }
 });
 
@@ -977,12 +985,14 @@ function denyNewsletter() {
 function saveOverride(sender, senderName, type) {
   overrides[sender.toLowerCase()] = { type, senderName };
   localStorage.setItem('nlm_overrides', JSON.stringify(overrides));
+  scheduleSave();
   renderRules();
 }
 
 function forgetOverride() {
   delete overrides[currentEmail.sender.toLowerCase()];
   localStorage.setItem('nlm_overrides', JSON.stringify(overrides));
+  scheduleSave();
   // Reset UI to fresh state
   document.getElementById('configCard').style.display = 'none';
   document.getElementById('applyBtn').style.display   = 'none';
@@ -1000,6 +1010,7 @@ function forgetOverride() {
 function deleteOverride(senderKey) {
   delete overrides[senderKey];
   localStorage.setItem('nlm_overrides', JSON.stringify(overrides));
+  scheduleSave();
   renderRules();
   showToast('Feedback gelöscht.', 'error');
 }
@@ -1086,8 +1097,9 @@ async function graphFetch(path, opts = {}) {
 function loadFoldersOnce() {
   if (folders.length > 0 || foldersLoading) return;
   if (!getCachedToken()) {
-    openAuthDialog(() => loadFolders()); // direct dialog call, no async chain
+    openAuthDialog(() => { ensureMailboxLoaded(); loadFolders(); });
   } else {
+    ensureMailboxLoaded();
     foldersLoading = true;
     loadFolders().finally(() => { foldersLoading = false; });
   }
@@ -1197,6 +1209,7 @@ function applyRule() {
   const rule = { sender: currentEmail.sender, senderName: currentEmail.senderName, folderId, folderName };
   if (existingIdx >= 0) rules[existingIdx] = rule; else rules.push(rule);
   localStorage.setItem('nlm_rules', JSON.stringify(rules));
+  scheduleSave();
 
   document.getElementById('applyBtn').disabled = true;
   showToast(`Verschiebe Mails von "${currentEmail.senderName}"…`, 'success');
@@ -1391,6 +1404,7 @@ async function reapplyAllRules() {
 function deleteRule(i) {
   rules.splice(i, 1);
   localStorage.setItem('nlm_rules', JSON.stringify(rules));
+  scheduleSave();
   renderRules();
   showToast('Regel gelöscht.', 'error');
 }
@@ -1524,6 +1538,7 @@ function applyScanRule(email, name, folderId, folderName, itemEl) {
   const idx  = rules.findIndex(r => r.sender === email);
   if (idx >= 0) rules[idx] = rule; else rules.push(rule);
   localStorage.setItem('nlm_rules', JSON.stringify(rules));
+  scheduleSave();
   renderRules();
   createExchangeRule(email, name, folderId);
   itemEl.remove();
@@ -1531,6 +1546,78 @@ function applyScanRule(email, name, folderId, folderName, itemEl) {
     const skipNote = skipped > 0 ? ` · ${skipped} persönl. belassen` : '';
     showToast(`${moved} Mail${moved !== 1 ? 's' : ''} von "${name}" nach "${folderName}" verschoben${skipNote} ✦`, 'success');
   });
+}
+
+// ══════════════════════════════════════════════════
+//  MAILBOX SYNC  (Exchange extended property)
+// ══════════════════════════════════════════════════
+function scheduleSave() {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(saveToMailbox, 2000);
+}
+
+async function saveToMailbox() {
+  try {
+    // Prune NB vocab: keep only words seen more than once to limit payload size
+    const vocab = JSON.parse(localStorage.getItem('nlm_vocab') || '{}');
+    const prunedVocab = Object.fromEntries(
+      Object.entries(vocab).filter(([, v]) => (v.nl || 0) + (v.notNl || 0) > 1)
+    );
+    const payload = JSON.stringify({
+      rules,
+      overrides,
+      defaultFolder,
+      nbVocab:  prunedVocab,
+      nbTotals: JSON.parse(localStorage.getItem('nlm_totals')       || '{"nl":0,"notNl":0}'),
+      nbCounts: JSON.parse(localStorage.getItem('nlm_class_counts') || '{"nl":0,"notNl":0}'),
+    });
+    await graphFetch('/me/mailFolders/inbox', {
+      method: 'PATCH',
+      body: JSON.stringify({
+        singleValueExtendedProperties: [{ id: EXT_PROP_ID, value: payload }]
+      })
+    });
+    console.log('[NLM] Mailbox sync saved, size:', payload.length, 'chars');
+  } catch (e) {
+    console.warn('[NLM] saveToMailbox failed:', e.message);
+  }
+}
+
+async function loadFromMailbox() {
+  try {
+    const data = await graphFetch(
+      `/me/mailFolders/inbox?$expand=singleValueExtendedProperties($filter=id eq '${EXT_PROP_ID}')`
+    );
+    const prop = (data.singleValueExtendedProperties || []).find(p => p.id === EXT_PROP_ID);
+    if (!prop?.value) return false;
+
+    const saved = JSON.parse(prop.value);
+    let changed = false;
+    if (saved.rules)     { rules     = saved.rules;     localStorage.setItem('nlm_rules',          JSON.stringify(rules));     changed = true; }
+    if (saved.overrides) { overrides = saved.overrides; localStorage.setItem('nlm_overrides',       JSON.stringify(overrides)); changed = true; }
+    if (saved.defaultFolder !== undefined) {
+      defaultFolder = saved.defaultFolder;
+      localStorage.setItem('nlm_default_folder', JSON.stringify(defaultFolder));
+    }
+    if (saved.nbVocab)  localStorage.setItem('nlm_vocab',        JSON.stringify(saved.nbVocab));
+    if (saved.nbTotals) localStorage.setItem('nlm_totals',       JSON.stringify(saved.nbTotals));
+    if (saved.nbCounts) localStorage.setItem('nlm_class_counts', JSON.stringify(saved.nbCounts));
+    console.log('[NLM] Mailbox sync loaded, rules:', rules.length, 'overrides:', Object.keys(overrides).length);
+    return changed;
+  } catch (e) {
+    console.warn('[NLM] loadFromMailbox failed:', e.message);
+    return false;
+  }
+}
+
+async function ensureMailboxLoaded() {
+  if (mailboxLoaded) return;
+  mailboxLoaded = true;
+  const changed = await loadFromMailbox();
+  if (changed) {
+    renderRules();
+    if (currentEmail.sender) analyzeEmail();
+  }
 }
 
 // ══════════════════════════════════════════════════
