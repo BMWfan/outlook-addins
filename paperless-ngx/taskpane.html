@@ -390,6 +390,70 @@
     }
     .option-text { font-size: 12px; color: var(--muted); }
 
+    /* ── Custom Fields ── */
+    .cf-row {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+      padding: 7px 14px;
+      border-bottom: 1px solid var(--border);
+    }
+    .cf-row:last-of-type { border-bottom: none; }
+    .cf-select {
+      flex: 1;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      color: var(--text);
+      font-family: var(--font-mono);
+      font-size: 11px;
+      padding: 6px 8px;
+      border-radius: 6px;
+      outline: none;
+      min-width: 0;
+    }
+    .cf-select:focus { border-color: var(--accent); }
+    .cf-input {
+      flex: 1;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      color: var(--text);
+      font-family: var(--font-mono);
+      font-size: 11px;
+      padding: 6px 8px;
+      border-radius: 6px;
+      outline: none;
+      min-width: 0;
+    }
+    .cf-input:focus { border-color: var(--accent); }
+    .cf-remove {
+      background: none;
+      border: none;
+      color: var(--muted);
+      cursor: pointer;
+      font-size: 14px;
+      padding: 2px 4px;
+      border-radius: 4px;
+      line-height: 1;
+      flex-shrink: 0;
+      transition: color 0.1s;
+    }
+    .cf-remove:hover { color: var(--red); }
+    .cf-add-btn {
+      width: 100%;
+      padding: 7px 14px;
+      background: none;
+      border: none;
+      border-top: 1px solid var(--border);
+      color: var(--muted);
+      font-family: var(--font);
+      font-size: 11px;
+      text-align: left;
+      cursor: pointer;
+      transition: color 0.15s;
+    }
+    .cf-add-btn:hover { color: var(--accent); }
+    .cf-empty { padding: 8px 14px; font-size: 11px; color: var(--muted); font-style: italic; }
+
     /* ── Upload Button ── */
     .btn-upload {
       width: 100%;
@@ -558,7 +622,7 @@
 <div class="header">
   <div class="header-icon">📎</div>
   <h1>Paperless NGX</h1>
-  <span class="version">v1.2</span>
+  <span class="version">v1.3</span>
   <div class="header-spacer"></div>
   <button class="btn-gear" id="gearBtn" onclick="toggleSettings()" title="Einstellungen">⚙</button>
 </div>
@@ -733,6 +797,16 @@
     <input type="checkbox" id="useSubjectAsTitle"/>
     <span class="option-text">E-Mail-Betreff als Dokumenttitel verwenden</span>
   </label>
+
+  <!-- Custom Fields -->
+  <div class="card" id="customFieldsCard" style="display:none;">
+    <div class="card-header">
+      <span class="card-title">Custom Fields</span>
+      <span class="badge" id="cfBadge" style="display:none;">0</span>
+    </div>
+    <div id="cfRows"></div>
+    <button class="cf-add-btn" id="cfAddBtn" onclick="addCfRow()">+ Feld hinzufügen</button>
+  </div>
 
   <!-- Upload button -->
   <button class="btn-upload" id="uploadBtn" onclick="uploadSelected()" disabled style="display:none;">
@@ -932,6 +1006,7 @@ function updateAuthState() {
   if (loggedIn) {
     document.getElementById('loggedInName').textContent = settings.username || '(unbekannt)';
     document.getElementById('saveUrlBtn').style.display = 'none';
+    fetchCustomFieldDefs();
   }
 }
 
@@ -1055,6 +1130,7 @@ function renderAttachments() {
   document.getElementById('attachmentsCard').style.display  = 'block';
   document.getElementById('optionsRow').style.display       = 'flex';
   document.getElementById('uploadBtn').style.display        = 'block';
+  showCfCardIfNeeded();
   updateUploadBtn();
 }
 
@@ -1175,9 +1251,13 @@ async function uploadSingle(att, rowEl) {
     const fd = new FormData();
     fd.append('document', blob, att.name);
     if (document.getElementById('useSubjectAsTitle')?.checked) {
-      const subject = Office.context.mailbox.item.subject || '';
+      const subject = mode === 'inbox'
+        ? (att.emailSubject || att.name)
+        : (Office.context.mailbox.item.subject || '');
       fd.append('title', subject ? `${subject} – ${att.name}` : att.name);
     }
+    const cfValues = collectCustomFields();
+    if (cfValues.length) fd.append('custom_fields', JSON.stringify(cfValues));
 
     const url  = settings.server.replace(/\/$/, '') + '/api/documents/post_document/';
     const resp = await fetch(url, {
@@ -1257,6 +1337,7 @@ function setMode(m) {
   if (m === 'current') {
     document.getElementById('optionsRow').style.display = attachments.length ? 'flex' : 'none';
     document.getElementById('uploadBtn').style.display  = attachments.length ? 'block' : 'none';
+    showCfCardIfNeeded();
     updateUploadBtn();
   }
 }
@@ -1430,6 +1511,7 @@ async function loadInboxAttachments() {
     document.getElementById('inboxAttPane').style.display = 'block';
     document.getElementById('optionsRow').style.display   = 'flex';
     document.getElementById('uploadBtn').style.display    = 'block';
+    showCfCardIfNeeded();
     updateUploadBtn();
   } catch (e) {
     showToast('Fehler beim Laden: ' + e.message, 'error');
@@ -1499,6 +1581,131 @@ function backToInbox() {
   const btn = document.getElementById('loadAttsBtn');
   btn.disabled    = false;
   btn.textContent = 'Anhänge der gewählten Mails laden';
+}
+
+// ══════════════════════════════════════════════════
+//  CUSTOM FIELDS
+// ══════════════════════════════════════════════════
+let customFieldDefs = [];  // [{id, name, data_type}] from /api/custom_fields/
+let cfRowCounter    = 0;
+
+async function fetchCustomFieldDefs() {
+  if (!settings.server || !settings.token) return;
+  try {
+    const resp = await fetch(`${settings.server.replace(/\/$/, '')}/api/custom_fields/?page_size=200`, {
+      credentials: 'include',
+      headers: { 'Authorization': `Token ${settings.token}` },
+    });
+    if (!resp.ok) return;
+    const data = await resp.json();
+    customFieldDefs = (data.results || []).map(f => ({
+      id:        f.id,
+      name:      f.name,
+      dataType:  f.data_type || 'string',
+    }));
+    updateCfAddBtn();
+  } catch (_) {}
+}
+
+function updateCfAddBtn() {
+  const btn = document.getElementById('cfAddBtn');
+  if (!btn) return;
+  btn.style.display = customFieldDefs.length ? 'block' : 'none';
+  if (!customFieldDefs.length) {
+    const rows = document.getElementById('cfRows');
+    if (rows && !rows.children.length)
+      rows.innerHTML = '<div class="cf-empty">Keine Custom Fields in Paperless gefunden.</div>';
+  }
+}
+
+function showCfCardIfNeeded() {
+  const card = document.getElementById('customFieldsCard');
+  if (!card) return;
+  card.style.display = settings.server && settings.token ? 'block' : 'none';
+  updateCfAddBtn();
+  updateCfBadge();
+}
+
+function addCfRow() {
+  if (!customFieldDefs.length) return;
+  const rows = document.getElementById('cfRows');
+  // remove empty-state placeholder if present
+  const empty = rows.querySelector('.cf-empty');
+  if (empty) empty.remove();
+
+  const id = cfRowCounter++;
+  const opts = customFieldDefs.map(f =>
+    `<option value="${f.id}" data-type="${esc(f.dataType)}">${esc(f.name)}</option>`
+  ).join('');
+  const firstType = customFieldDefs[0]?.dataType || 'string';
+
+  const row = document.createElement('div');
+  row.className = 'cf-row';
+  row.id = `cf-row-${id}`;
+  row.innerHTML = `
+    <select class="cf-select" id="cf-sel-${id}" onchange="onCfTypeChange(${id})">${opts}</select>
+    <input class="cf-input" id="cf-val-${id}" type="${cfInputType(firstType)}"
+           placeholder="${cfPlaceholder(firstType)}" oninput="updateCfBadge()"/>
+    <button class="cf-remove" onclick="removeCfRow(${id})" title="Entfernen">✕</button>`;
+  rows.appendChild(row);
+  document.getElementById(`cf-val-${id}`)?.focus();
+  updateCfBadge();
+}
+
+function cfInputType(dataType) {
+  if (dataType === 'date')    return 'date';
+  if (dataType === 'integer' || dataType === 'float' || dataType === 'monetary') return 'number';
+  if (dataType === 'url')     return 'url';
+  return 'text';
+}
+
+function cfPlaceholder(dataType) {
+  if (dataType === 'boolean')  return 'true / false';
+  if (dataType === 'monetary') return '0.00';
+  return 'Wert…';
+}
+
+function onCfTypeChange(id) {
+  const sel = document.getElementById(`cf-sel-${id}`);
+  const inp = document.getElementById(`cf-val-${id}`);
+  if (!sel || !inp) return;
+  const dataType = sel.options[sel.selectedIndex]?.dataset.type || 'string';
+  inp.type        = cfInputType(dataType);
+  inp.placeholder = cfPlaceholder(dataType);
+  inp.value       = '';
+}
+
+function removeCfRow(id) {
+  document.getElementById(`cf-row-${id}`)?.remove();
+  const rows = document.getElementById('cfRows');
+  if (rows && !rows.querySelector('.cf-row'))
+    rows.innerHTML = '';
+  updateCfBadge();
+}
+
+function updateCfBadge() {
+  const rows    = document.querySelectorAll('.cf-row');
+  const filled  = Array.from(rows).filter(r => {
+    const val = r.querySelector('.cf-input')?.value.trim();
+    return val && val !== '';
+  }).length;
+  const badge = document.getElementById('cfBadge');
+  if (!badge) return;
+  if (filled > 0) { badge.textContent = filled; badge.style.display = 'inline'; }
+  else              badge.style.display = 'none';
+}
+
+function collectCustomFields() {
+  const rows = document.querySelectorAll('.cf-row');
+  const result = [];
+  rows.forEach(r => {
+    const fieldId = parseInt(r.querySelector('.cf-select')?.value, 10);
+    const val     = r.querySelector('.cf-input')?.value.trim();
+    if (fieldId && val !== '' && val !== undefined) {
+      result.push({ field: fieldId, value: val });
+    }
+  });
+  return result;
 }
 
 // ══════════════════════════════════════════════════
