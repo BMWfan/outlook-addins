@@ -622,7 +622,7 @@
 <div class="header">
   <div class="header-icon">📎</div>
   <h1>Paperless NGX</h1>
-  <span class="version">v1.3</span>
+  <span class="version">v1.5</span>
   <div class="header-spacer"></div>
   <button class="btn-gear" id="gearBtn" onclick="toggleSettings()" title="Einstellungen">⚙</button>
 </div>
@@ -764,6 +764,9 @@
       <div class="card-header" style="justify-content:space-between;">
         <span class="card-title">📬 Mails mit Anhängen</span>
         <button class="btn-test" style="width:auto;padding:4px 10px;" onclick="loadInbox()">↺ Aktualisieren</button>
+      </div>
+      <div style="padding:7px 14px; border-bottom:1px solid var(--border); font-size:10px; color:var(--muted); line-height:1.5;">
+        Strg+Klick auf mehrere Mails in Outlook → diese Liste aktualisiert sich automatisch.
       </div>
       <div class="att-list" id="inboxList">
         <div class="empty"><div class="empty-icon">📬</div>Klicke "Aktualisieren" um Mails zu laden.</div>
@@ -1072,6 +1075,14 @@ function saveManualToken() {
 Office.onReady(function(info) {
   loadSettings();
   if (info.host === Office.HostType.Outlook) {
+    // Register selection-change handler (Mailbox 1.13+, no-op on older clients)
+    if (Office.context.mailbox.addHandlerAsync) {
+      Office.context.mailbox.addHandlerAsync(
+        Office.EventType.SelectedItemsChanged,
+        onSelectionChanged,
+        () => {}
+      );
+    }
     loadAttachments();
   } else {
     showMain();
@@ -1087,12 +1098,67 @@ function showMain() {
 // ══════════════════════════════════════════════════
 //  ATTACHMENTS
 // ══════════════════════════════════════════════════
+// Called on SelectedItemsChanged event (Mailbox 1.13+)
+function onSelectionChanged() {
+  if (typeof Office.context.mailbox.getSelectedItemsAsync !== 'function') return;
+  Office.context.mailbox.getSelectedItemsAsync({}, result => {
+    if (result.status !== Office.AsyncResultStatus.Succeeded) return;
+    const items = result.value || [];
+    if (items.length > 1) {
+      // Multiple items selected — switch to inbox tab and populate
+      setMode('inbox');
+      populateInboxFromSelection(items);
+    } else {
+      // Single item or none — refresh current-mail view
+      if (mode === 'current') loadAttachments();
+    }
+  });
+}
+
+function populateInboxFromSelection(items) {
+  inboxEmails = items.map(i => ({
+    id:        i.itemId  || '',
+    changeKey: '',
+    subject:   i.subject || '(kein Betreff)',
+    date:      '',
+    hasAttachment: i.hasAttachment !== false,
+  })).filter(e => e.id);
+
+  const list = document.getElementById('inboxList');
+  if (!inboxEmails.length) {
+    list.innerHTML = '<div class="empty">Keine Mails in der Auswahl.</div>';
+    document.getElementById('loadAttsBtn').disabled = true;
+    return;
+  }
+  list.innerHTML = inboxEmails.map((e, i) => `
+    <div class="inbox-item${e.hasAttachment ? ' selected' : ''}" id="inbox-row-${i}" onclick="toggleInboxRow(${i})">
+      <input type="checkbox" class="inbox-cb" id="inbox-cb-${i}"
+             ${e.hasAttachment ? 'checked' : ''} onclick="event.stopPropagation()" onchange="onInboxCheck()"/>
+      <div class="inbox-info">
+        <div class="inbox-subject" title="${esc(e.subject)}">${esc(e.subject)}</div>
+        ${!e.hasAttachment ? '<div class="inbox-meta"><span class="inbox-date" style="color:var(--muted)">kein Anhang</span></div>' : ''}
+      </div>
+    </div>`).join('');
+  document.getElementById('loadAttsBtn').disabled =
+    !inboxEmails.some((e, i) => document.getElementById('inbox-cb-' + i)?.checked);
+}
+
 function loadAttachments() {
-  const raw = Office.context.mailbox.item.attachments || [];
+  const item = Office.context.mailbox.item;
+  showMain();
+
+  // No item context (multi-select or nothing selected) — handled by onSelectionChanged
+  if (!item) {
+    if (mode === 'current') {
+      document.getElementById('emptyCard').style.display = 'block';
+    }
+    return;
+  }
+
+  const raw = item.attachments || [];
   attachments = raw.filter(a =>
     a.attachmentType === Office.MailboxEnums.AttachmentType.File && !a.isInline
   );
-  showMain();
 
   if (attachments.length === 0) {
     document.getElementById('emptyCard').style.display = 'block';
@@ -1253,7 +1319,7 @@ async function uploadSingle(att, rowEl) {
     if (document.getElementById('useSubjectAsTitle')?.checked) {
       const subject = mode === 'inbox'
         ? (att.emailSubject || att.name)
-        : (Office.context.mailbox.item.subject || '');
+        : (Office.context.mailbox.item?.subject || '');
       fd.append('title', subject ? `${subject} – ${att.name}` : att.name);
     }
     const cfValues = collectCustomFields();
@@ -1402,7 +1468,9 @@ async function ewsFindEmailsWithAttachments() {
 
 async function ewsGetAttachmentsMeta(items) {
   const idsXml = items.map(e =>
-    `<t:ItemId Id="${escXml(e.id)}" ChangeKey="${escXml(e.changeKey)}"/>`
+    e.changeKey
+      ? `<t:ItemId Id="${escXml(e.id)}" ChangeKey="${escXml(e.changeKey)}"/>`
+      : `<t:ItemId Id="${escXml(e.id)}"/>`
   ).join('');
   const doc = await ewsRequest(`
     <m:GetItem>
@@ -1441,6 +1509,51 @@ async function ewsGetAttachmentContent(ewsId) {
 // ══════════════════════════════════════════════════
 //  INBOX MODE
 // ══════════════════════════════════════════════════
+function loadFromOutlookSelection() {
+  if (typeof Office.context.mailbox.getSelectedItemsAsync !== 'function') {
+    showToast('Nicht verfügbar – Outlook-Version zu alt (Mailbox 1.13 benötigt).', 'error');
+    return;
+  }
+  const list = document.getElementById('inboxList');
+  list.innerHTML = '<div class="loading"><div class="spinner"></div><span>Lese Outlook-Auswahl…</span></div>';
+  document.getElementById('loadAttsBtn').disabled = true;
+
+  Office.context.mailbox.getSelectedItemsAsync({}, result => {
+    if (result.status !== Office.AsyncResultStatus.Succeeded) {
+      list.innerHTML = `<div class="empty" style="color:var(--red)">✗ ${esc(result.error?.message || 'Fehler')}</div>`;
+      return;
+    }
+    const items = result.value || [];
+    if (!items.length) {
+      list.innerHTML = '<div class="empty">Keine Mails in der Outlook-Auswahl.<br>Bitte erst im Postfach mehrere Mails selektieren.</div>';
+      return;
+    }
+
+    inboxEmails = items.map(i => ({
+      id:        i.itemId   || '',
+      changeKey: '',
+      subject:   i.subject  || '(kein Betreff)',
+      date:      '',
+    })).filter(e => e.id);
+
+    if (!inboxEmails.length) {
+      list.innerHTML = '<div class="empty" style="color:var(--red)">✗ Keine gültigen Item-IDs in der Auswahl.</div>';
+      return;
+    }
+
+    // Show the selected items as pre-checked rows and immediately load attachments
+    list.innerHTML = inboxEmails.map((e, i) => `
+      <div class="inbox-item selected" id="inbox-row-${i}">
+        <input type="checkbox" class="inbox-cb" id="inbox-cb-${i}" checked onclick="event.stopPropagation()" onchange="onInboxCheck()"/>
+        <div class="inbox-info">
+          <div class="inbox-subject">${esc(e.subject)}</div>
+        </div>
+      </div>`).join('');
+    document.getElementById('loadAttsBtn').disabled = false;
+    showToast(`${inboxEmails.length} Mail${inboxEmails.length !== 1 ? 's' : ''} aus Outlook übernommen`, 'success');
+  });
+}
+
 async function loadInbox() {
   const list = document.getElementById('inboxList');
   list.innerHTML = '<div class="loading"><div class="spinner"></div><span>Lade Mails…</span></div>';
