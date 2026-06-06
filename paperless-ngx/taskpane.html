@@ -1914,6 +1914,7 @@ async function fetchCustomFieldDefs() {
       id:        f.id,
       name:      f.name,
       dataType:  f.data_type || 'string',
+      extraData: f.extra_data || {},
     }));
     updateCfAddBtn();
   } catch (_) {}
@@ -1941,50 +1942,100 @@ function showCfCardIfNeeded() {
 function addCfRow() {
   if (!customFieldDefs.length) return;
   const rows = document.getElementById('cfRows');
-  // remove empty-state placeholder if present
   const empty = rows.querySelector('.cf-empty');
   if (empty) empty.remove();
 
-  const id = cfRowCounter++;
-  const opts = customFieldDefs.map(f =>
-    `<option value="${f.id}" data-type="${esc(f.dataType)}">${esc(f.name)}</option>`
-  ).join('');
-  const firstType = customFieldDefs[0]?.dataType || 'string';
-
+  const id  = cfRowCounter++;
   const row = document.createElement('div');
   row.className = 'cf-row';
   row.id = `cf-row-${id}`;
-  row.innerHTML = `
-    <select class="cf-select" id="cf-sel-${id}" onchange="onCfTypeChange(${id})">${opts}</select>
-    <input class="cf-input" id="cf-val-${id}" type="${cfInputType(firstType)}"
-           placeholder="${cfPlaceholder(firstType)}" oninput="updateCfBadge()"/>
-    <button class="cf-remove" onclick="removeCfRow(${id})" title="Entfernen">✕</button>`;
+
+  // Field selector
+  const sel = document.createElement('select');
+  sel.className = 'cf-select';
+  sel.id = `cf-sel-${id}`;
+  customFieldDefs.forEach(f => {
+    const opt = document.createElement('option');
+    opt.value = String(f.id); opt.textContent = f.name;
+    sel.appendChild(opt);
+  });
+  sel.addEventListener('change', () => onCfTypeChange(id));
+
+  // Value wrapper (replaced on field change)
+  const wrap = document.createElement('span');
+  wrap.id = `cf-val-wrap-${id}`;
+  wrap.style.cssText = 'flex:1;min-width:0;display:flex;';
+  const valEl = buildCfValueEl(customFieldDefs[0]);
+  valEl.id = `cf-val-${id}`;
+  wrap.appendChild(valEl);
+
+  // Remove button
+  const rmBtn = document.createElement('button');
+  rmBtn.className = 'cf-remove';
+  rmBtn.title = 'Entfernen';
+  rmBtn.textContent = '✕';
+  rmBtn.addEventListener('click', () => removeCfRow(id));
+
+  row.appendChild(sel); row.appendChild(wrap); row.appendChild(rmBtn);
   rows.appendChild(row);
-  document.getElementById(`cf-val-${id}`)?.focus();
+  valEl.focus?.();
   updateCfBadge();
 }
 
-function cfInputType(dataType) {
-  if (dataType === 'date')    return 'date';
-  if (dataType === 'integer' || dataType === 'float' || dataType === 'monetary') return 'number';
-  if (dataType === 'url')     return 'url';
-  return 'text';
-}
+function buildCfValueEl(fieldDef) {
+  const dtype = fieldDef?.dataType || 'string';
+  const extra = fieldDef?.extraData || {};
 
-function cfPlaceholder(dataType) {
-  if (dataType === 'boolean')  return 'true / false';
-  if (dataType === 'monetary') return '0.00';
-  return 'Wert…';
+  if (dtype === 'select') {
+    const opts = extra.select_options || [];
+    const el = document.createElement('select');
+    el.className = 'cf-input';
+    const ph = document.createElement('option');
+    ph.value = ''; ph.textContent = '— Option wählen —';
+    el.appendChild(ph);
+    for (const o of opts) {
+      const opt = document.createElement('option');
+      if (typeof o === 'string') { opt.value = o; opt.textContent = o; }
+      else { opt.value = String(o.id ?? o.value ?? o); opt.textContent = o.label ?? o.name ?? opt.value; }
+      el.appendChild(opt);
+    }
+    el.addEventListener('change', updateCfBadge);
+    return el;
+  }
+
+  if (dtype === 'boolean') {
+    const el = document.createElement('select');
+    el.className = 'cf-input';
+    [['', '— wählen —'], ['true', 'Ja'], ['false', 'Nein']].forEach(([v, t]) => {
+      const opt = document.createElement('option');
+      opt.value = v; opt.textContent = t; el.appendChild(opt);
+    });
+    el.addEventListener('change', updateCfBadge);
+    return el;
+  }
+
+  const inp = document.createElement('input');
+  inp.className = 'cf-input';
+  if      (dtype === 'date')          { inp.type = 'date'; }
+  else if (dtype === 'integer')       { inp.type = 'number'; inp.step = '1';    inp.placeholder = 'Zahl'; }
+  else if (dtype === 'float' || dtype === 'monetary') { inp.type = 'number'; inp.step = '0.01'; inp.placeholder = '0.00'; }
+  else if (dtype === 'url')           { inp.type = 'url';    inp.placeholder = 'https://…'; }
+  else if (dtype === 'document_link') { inp.type = 'number'; inp.step = '1';    inp.placeholder = 'Dokument-ID'; }
+  else                                { inp.type = 'text';   inp.placeholder = 'Wert…'; }
+  inp.addEventListener('input', updateCfBadge);
+  return inp;
 }
 
 function onCfTypeChange(id) {
-  const sel = document.getElementById(`cf-sel-${id}`);
-  const inp = document.getElementById(`cf-val-${id}`);
-  if (!sel || !inp) return;
-  const dataType = sel.options[sel.selectedIndex]?.dataset.type || 'string';
-  inp.type        = cfInputType(dataType);
-  inp.placeholder = cfPlaceholder(dataType);
-  inp.value       = '';
+  const sel  = document.getElementById(`cf-sel-${id}`);
+  const wrap = document.getElementById(`cf-val-wrap-${id}`);
+  if (!sel || !wrap) return;
+  const fieldDef = customFieldDefs.find(f => String(f.id) === sel.value) || null;
+  wrap.innerHTML = '';
+  const el = buildCfValueEl(fieldDef);
+  el.id = `cf-val-${id}`;
+  wrap.appendChild(el);
+  updateCfBadge();
 }
 
 function removeCfRow(id) {
