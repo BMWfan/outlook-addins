@@ -1364,12 +1364,17 @@ async function checkDuplicate(bytes) {
   const hash = md5hex(bytes);
   try {
     const r = await fetch(
-      `${settings.server.replace(/\/$/, '')}/api/documents/?checksum__iexact=${encodeURIComponent(hash)}&page_size=1`,
+      `${settings.server.replace(/\/$/, '')}/api/documents/?checksum__iexact=${encodeURIComponent(hash)}&page_size=5`,
       { credentials: 'include', headers: { 'Authorization': `Token ${settings.token}` } }
     );
     if (!r.ok) return false;
     const data = await r.json();
-    return data.count > 0;
+    if (!data.count) return false;
+    // Verify explicit checksum match — older Paperless versions may ignore the filter
+    // and return all documents; without this check every upload would be a "duplicate"
+    return (data.results || []).some(doc =>
+      (doc.checksum || '').toLowerCase() === hash
+    );
   } catch (_) { return false; }
 }
 
