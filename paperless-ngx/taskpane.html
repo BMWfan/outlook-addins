@@ -1164,10 +1164,12 @@ function loadAttachments() {
   const item = Office.context.mailbox.item;
   showMain();
 
-  // No item context (multi-select or nothing selected) — handled by onSelectionChanged
+  // No item context — multiple mails selected or nothing open
   if (!item) {
-    if (mode === 'current') {
-      document.getElementById('emptyCard').style.display = 'block';
+    document.getElementById('attachmentsCard').style.display = 'block';
+    setMode('inbox');
+    if (typeof Office.context.mailbox.getSelectedItemsAsync === 'function') {
+      loadFromOutlookSelection();
     }
     return;
   }
