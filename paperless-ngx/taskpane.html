@@ -749,6 +749,12 @@
     <div class="empty">
       <div class="empty-icon">📭</div>
       Diese E-Mail enthält keine Datei-Anhänge.
+      <div style="margin-top:12px;">
+        <button class="btn-save" style="font-size:11px;padding:7px 12px;"
+                onclick="document.getElementById('attachmentsCard').style.display='block';setMode('inbox');loadFromOutlookSelection();">
+          Aus Outlook-Auswahl laden
+        </button>
+      </div>
     </div>
   </div>
 
@@ -1180,7 +1186,20 @@ function loadAttachments() {
   );
 
   if (attachments.length === 0) {
-    document.getElementById('emptyCard').style.display = 'block';
+    // Check if multiple items are selected before showing the empty state
+    if (typeof Office.context.mailbox.getSelectedItemsAsync === 'function') {
+      Office.context.mailbox.getSelectedItemsAsync({}, result => {
+        if (result.status === Office.AsyncResultStatus.Succeeded && (result.value || []).length > 1) {
+          document.getElementById('attachmentsCard').style.display = 'block';
+          setMode('inbox');
+          loadFromOutlookSelection();
+        } else {
+          document.getElementById('emptyCard').style.display = 'block';
+        }
+      });
+    } else {
+      document.getElementById('emptyCard').style.display = 'block';
+    }
     return;
   }
 
