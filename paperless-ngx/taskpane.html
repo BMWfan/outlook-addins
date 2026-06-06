@@ -1545,9 +1545,9 @@ function setMode(m) {
     document.getElementById('optionsRow').style.display = attachments.length ? 'flex' : 'none';
     document.getElementById('skipDupRow').style.display = attachments.length ? 'flex' : 'none';
     document.getElementById('uploadBtn').style.display  = attachments.length ? 'block' : 'none';
-    showCfCardIfNeeded();
     updateUploadBtn();
   }
+  showCfCardIfNeeded();
 }
 
 // ══════════════════════════════════════════════════
