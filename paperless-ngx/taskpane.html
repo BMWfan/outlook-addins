@@ -597,6 +597,19 @@
     .btn-load-atts:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
     .btn-load-atts:disabled { opacity: 0.4; cursor: not-allowed; }
 
+    /* ── Duplicate badge ── */
+    .dup-badge {
+      font-size: 9px;
+      padding: 1px 6px;
+      border-radius: 3px;
+      background: var(--yellow-dim);
+      border: 1px solid rgba(251,191,36,0.3);
+      color: var(--yellow);
+      font-family: var(--font-mono);
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+
     /* ── Email group header in attachment list ── */
     .att-group-header {
       padding: 6px 14px;
@@ -799,6 +812,10 @@
   <label class="option-label" id="optionsRow" style="display:none;">
     <input type="checkbox" id="useSubjectAsTitle"/>
     <span class="option-text">E-Mail-Betreff als Dokumenttitel verwenden</span>
+  </label>
+  <label class="option-label" id="skipDupRow" style="display:none;">
+    <input type="checkbox" id="skipDuplicates" checked/>
+    <span class="option-text">Duplikate überspringen (Inhalt per MD5 geprüft)</span>
   </label>
 
   <!-- Custom Fields -->
@@ -1195,6 +1212,7 @@ function renderAttachments() {
   document.getElementById('attCount').textContent           = attachments.length;
   document.getElementById('attachmentsCard').style.display  = 'block';
   document.getElementById('optionsRow').style.display       = 'flex';
+  document.getElementById('skipDupRow').style.display       = 'flex';
   document.getElementById('uploadBtn').style.display        = 'block';
   showCfCardIfNeeded();
   updateUploadBtn();
@@ -1272,11 +1290,65 @@ function getAttachmentContent(id) {
   });
 }
 
+function base64ToBytes(b64) {
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
 function base64ToBlob(b64, mime) {
-  const bin   = atob(b64);
-  const bytes = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-  return new Blob([bytes], { type: mime || 'application/octet-stream' });
+  return new Blob([base64ToBytes(b64)], { type: mime || 'application/octet-stream' });
+}
+
+// Compact MD5 — used for content-based duplicate detection against Paperless checksum field
+function md5hex(bytes) {
+  const n = x => x >>> 0;
+  const add = (a, b) => n(n(a) + n(b));
+  const rol = (v, s) => { v = n(v); return n((v << s) | (v >>> (32 - s))); };
+  const K = new Uint32Array(64);
+  for (let i = 0; i < 64; i++) K[i] = n(Math.floor(Math.abs(Math.sin(i + 1)) * 0x100000000));
+  const len = bytes.length;
+  const padLen = ((len % 64) < 56 ? 56 : 120) - (len % 64);
+  const buf = new Uint8Array(len + padLen + 8);
+  buf.set(bytes);
+  buf[len] = 0x80;
+  const dv = new DataView(buf.buffer);
+  dv.setUint32(len + padLen,     (len * 8) >>> 0,                    true);
+  dv.setUint32(len + padLen + 4, Math.floor(len / 0x20000000) >>> 0, true);
+  let a = 0x67452301, b = 0xEFCDAB89, c = 0x98BADCFE, d = 0x10325476;
+  const S = [[7,12,17,22],[5,9,14,20],[4,11,16,23],[6,10,15,21]];
+  for (let off = 0; off < buf.length; off += 64) {
+    const M = Array.from({length:16}, (_, i) => dv.getUint32(off + i*4, true));
+    let [A,B,C,D] = [a,b,c,d];
+    for (let j = 0; j < 64; j++) {
+      let F, g;
+      if      (j < 16) { F = n((B & C) | (n(~B) & D)); g = j; }
+      else if (j < 32) { F = n((D & B) | (n(~D) & C)); g = (5*j+1)%16; }
+      else if (j < 48) { F = n(B ^ C ^ D);              g = (3*j+5)%16; }
+      else             { F = n(C ^ (B | n(~D)));         g = (7*j)%16; }
+      const tmp = add(add(A, F), add(M[g], K[j]));
+      [A,D,C,B] = [D, C, B, add(B, rol(tmp, S[j>>4][j&3]))];
+    }
+    [a,b,c,d] = [add(a,A),add(b,B),add(c,C),add(d,D)];
+  }
+  return [a,b,c,d].map(v =>
+    Array.from({length:4}, (_,i) => ((v>>>(i*8))&0xff).toString(16).padStart(2,'0')).join('')
+  ).join('');
+}
+
+async function checkDuplicate(bytes) {
+  if (!settings.server || !settings.token) return false;
+  const hash = md5hex(bytes);
+  try {
+    const r = await fetch(
+      `${settings.server.replace(/\/$/, '')}/api/documents/?checksum=${encodeURIComponent(hash)}&page_size=1`,
+      { credentials: 'include', headers: { 'Authorization': `Token ${settings.token}` } }
+    );
+    if (!r.ok) return false;
+    const data = await r.json();
+    return data.count > 0;
+  } catch (_) { return false; }
 }
 
 function setProgStatus(rowEl, state, msg) {
@@ -1287,6 +1359,14 @@ function setProgStatus(rowEl, state, msg) {
   }
   if (state === 'ok') {
     el.innerHTML = `<span style="color:var(--green)">✓</span>`;
+    return;
+  }
+  if (state === 'skip') {
+    el.innerHTML = `<span style="color:var(--yellow)">⊘</span>`;
+    let skipEl = rowEl.querySelector('.prog-error');
+    if (!skipEl) { skipEl = document.createElement('div'); skipEl.className = 'prog-error'; rowEl.appendChild(skipEl); }
+    skipEl.style.color = 'var(--yellow)';
+    skipEl.textContent = msg;
     return;
   }
   // error — show ✗ and render error text below the filename
@@ -1312,7 +1392,25 @@ async function uploadSingle(att, rowEl) {
       b64  = content.content;
       mime = att.contentType || 'application/octet-stream';
     }
-    const blob = base64ToBlob(b64, mime);
+    const bytes = base64ToBytes(b64);
+    const blob  = new Blob([bytes], { type: mime });
+
+    // Duplicate check via MD5 checksum
+    const isDup = await checkDuplicate(bytes);
+    if (isDup) {
+      if (document.getElementById('skipDuplicates')?.checked) {
+        setProgStatus(rowEl, 'skip', 'Übersprungen — identisches Dokument bereits in Paperless');
+        return 'skipped';
+      }
+      // Warn but still upload
+      const nameEl = rowEl.querySelector('.prog-name');
+      if (nameEl) {
+        const badge = document.createElement('span');
+        badge.className = 'dup-badge';
+        badge.textContent = '⚠ Duplikat';
+        nameEl.parentElement.insertBefore(badge, nameEl);
+      }
+    }
 
     const fd = new FormData();
     fd.append('document', blob, att.name);
@@ -1372,20 +1470,27 @@ async function uploadSelected() {
   progressCard.style.display = 'block';
   progressCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 
-  let ok = 0, fail = 0;
+  let ok = 0, fail = 0, skip = 0;
   for (let i = 0; i < selected.length; i++) {
-    const rowEl   = document.getElementById('prog-' + i);
-    const success = await uploadSingle(selected[i], rowEl);
-    success ? ok++ : fail++;
+    const rowEl  = document.getElementById('prog-' + i);
+    const result = await uploadSingle(selected[i], rowEl);
+    if (result === 'skipped') skip++;
+    else if (result)          ok++;
+    else                      fail++;
   }
 
   const n = selected.length;
   btn.disabled    = false;
   btn.textContent = `→ ${n} Datei${n !== 1 ? 'en' : ''} an Paperless senden`;
 
-  if      (fail === 0) showToast(`${ok} Datei${ok !== 1 ? 'en' : ''} erfolgreich hochgeladen ✦`, 'success');
-  else if (ok   === 0) showToast('Upload fehlgeschlagen – Server, Login und CORS prüfen.', 'error');
-  else                 showToast(`${ok} erfolgreich, ${fail} fehlgeschlagen.`, 'error');
+  if (fail === 0 && skip === 0)
+    showToast(`${ok} Datei${ok !== 1 ? 'en' : ''} erfolgreich hochgeladen ✦`, 'success');
+  else if (fail === 0)
+    showToast(`${ok} hochgeladen, ${skip} als Duplikat übersprungen.`, 'success');
+  else if (ok === 0 && skip === 0)
+    showToast('Upload fehlgeschlagen – Server, Login und CORS prüfen.', 'error');
+  else
+    showToast(`${ok} hochgeladen, ${skip} übersprungen, ${fail} fehlgeschlagen.`, 'error');
 }
 
 // ══════════════════════════════════════════════════
@@ -1399,9 +1504,11 @@ function setMode(m) {
   document.getElementById('inboxPane').style.display        = m === 'inbox'   ? 'block' : 'none';
   document.getElementById('inboxAttPane').style.display     = 'none';
   document.getElementById('optionsRow').style.display       = 'none';
+  document.getElementById('skipDupRow').style.display       = 'none';
   document.getElementById('uploadBtn').style.display        = 'none';
   if (m === 'current') {
     document.getElementById('optionsRow').style.display = attachments.length ? 'flex' : 'none';
+    document.getElementById('skipDupRow').style.display = attachments.length ? 'flex' : 'none';
     document.getElementById('uploadBtn').style.display  = attachments.length ? 'block' : 'none';
     showCfCardIfNeeded();
     updateUploadBtn();
@@ -1623,6 +1730,7 @@ async function loadInboxAttachments() {
     document.getElementById('inboxPane').style.display    = 'none';
     document.getElementById('inboxAttPane').style.display = 'block';
     document.getElementById('optionsRow').style.display   = 'flex';
+    document.getElementById('skipDupRow').style.display   = 'flex';
     document.getElementById('uploadBtn').style.display    = 'block';
     showCfCardIfNeeded();
     updateUploadBtn();
@@ -1690,6 +1798,7 @@ function backToInbox() {
   document.getElementById('inboxAttPane').style.display = 'none';
   document.getElementById('inboxPane').style.display    = 'block';
   document.getElementById('optionsRow').style.display   = 'none';
+  document.getElementById('skipDupRow').style.display   = 'none';
   document.getElementById('uploadBtn').style.display    = 'none';
   const btn = document.getElementById('loadAttsBtn');
   btn.disabled    = false;
