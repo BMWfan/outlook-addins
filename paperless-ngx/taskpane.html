@@ -1364,7 +1364,7 @@ async function checkDuplicate(bytes) {
   const hash = md5hex(bytes);
   try {
     const r = await fetch(
-      `${settings.server.replace(/\/$/, '')}/api/documents/?checksum=${encodeURIComponent(hash)}&page_size=1`,
+      `${settings.server.replace(/\/$/, '')}/api/documents/?checksum__iexact=${encodeURIComponent(hash)}&page_size=1`,
       { credentials: 'include', headers: { 'Authorization': `Token ${settings.token}` } }
     );
     if (!r.ok) return false;
