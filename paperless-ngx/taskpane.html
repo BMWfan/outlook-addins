@@ -785,7 +785,7 @@
         <button class="btn-test" style="width:auto;padding:4px 10px;" onclick="loadInbox()">↺ Aktualisieren</button>
       </div>
       <div style="padding:7px 14px; border-bottom:1px solid var(--border); font-size:10px; color:var(--muted); line-height:1.5;">
-        Strg+Klick auf mehrere Mails in Outlook → diese Liste aktualisiert sich automatisch.
+        Strg+Klick auf mehrere Mails → zuletzt angeklickte Mail bleibt fokussiert (Häkchen bleibt). Dann "Anhänge laden".
       </div>
       <div class="att-list" id="inboxList">
         <div class="empty"><div class="empty-icon">📬</div>Klicke "Aktualisieren" um Mails zu laden.</div>
@@ -1794,25 +1794,16 @@ async function loadInboxAttachments() {
   btn.textContent = '↺ Lade Anhänge…';
 
   try {
-    const useRest = selected.some(e => e.fromSelection);
     let results;
-    if (useRest) {
-      try {
-        results = await restGetAttachmentsMeta(selected);
-      } catch (restErr) {
-        // REST failed (e.g. no callback token in no-item context) — try EWS with converted IDs
-        const ewsItems = selected.map(e => ({
-          ...e,
-          id: (() => { try { return Office.context.mailbox.convertToEwsId(e.id, Office.MailboxEnums.RestVersion.v2_0); } catch (_) { return e.id; } })(),
-        }));
-        try {
-          results = await ewsGetAttachmentsMeta(ewsItems);
-        } catch (ewsErr) {
-          throw new Error('REST: ' + restErr.message + ' | EWS: ' + ewsErr.message);
-        }
-      }
-    } else {
+    try {
       results = await ewsGetAttachmentsMeta(selected);
+    } catch (ewsErr) {
+      // EWS failed — likely no item context (pure multi-select without a focused mail).
+      // Guide the user to focus one of the selected mails.
+      throw new Error(
+        'Kein Postfachzugriff — bitte eine der markierten Mails kurz anklicken ' +
+        '(ohne Auswahl aufzuheben), dann hier erneut versuchen.'
+      );
     }
     inboxAttachments = [];
     results.forEach((r, emailIdx) => {
