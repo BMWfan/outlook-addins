@@ -635,7 +635,7 @@
 <div class="header">
   <div class="header-icon">📎</div>
   <h1>Paperless NGX</h1>
-  <span class="version">v1.6</span>
+  <span class="version">v1.7</span>
   <div class="header-spacer"></div>
   <button class="btn-gear" id="gearBtn" onclick="toggleSettings()" title="Einstellungen">⚙</button>
 </div>
@@ -1406,7 +1406,17 @@ async function uploadSingle(att, rowEl) {
   setProgStatus(rowEl, 'loading');
   try {
     let b64, mime;
-    if (att.ewsId) {
+    if (att.loadedItemId) {
+      let loadedItem;
+      try {
+        loadedItem = await loadItemById(att.loadedItemId);
+        const content = await getAttachmentContentFromItem(loadedItem, att.id);
+        b64  = content.content;
+        mime = att.contentType || 'application/octet-stream';
+      } finally {
+        if (loadedItem) await unloadItem(loadedItem);
+      }
+    } else if (att.ewsId) {
       b64  = await ewsGetAttachmentContent(att.ewsId);
       mime = att.contentType || 'application/octet-stream';
     } else if (att.restId) {
@@ -1694,6 +1704,33 @@ async function ewsGetAttachmentContent(ewsId) {
 }
 
 // ══════════════════════════════════════════════════
+//  LOADITEMBYID — Mailbox 1.15, multi-select native access
+// ══════════════════════════════════════════════════
+function loadItemById(itemId) {
+  return new Promise((resolve, reject) => {
+    Office.context.mailbox.loadItemByIdAsync(itemId, result => {
+      if (result.status === Office.AsyncResultStatus.Succeeded) resolve(result.value);
+      else reject(new Error(result.error?.message || 'Item konnte nicht geladen werden'));
+    });
+  });
+}
+
+function unloadItem(loadedItem) {
+  return new Promise(resolve => {
+    loadedItem.unloadAsync(() => resolve());
+  });
+}
+
+function getAttachmentContentFromItem(loadedItem, attId) {
+  return new Promise((resolve, reject) => {
+    loadedItem.getAttachmentContentAsync(attId, {}, result => {
+      if (result.status === Office.AsyncResultStatus.Succeeded) resolve(result.value);
+      else reject(new Error(result.error?.message || 'Anhang nicht lesbar'));
+    });
+  });
+}
+
+// ══════════════════════════════════════════════════
 //  INBOX MODE
 // ══════════════════════════════════════════════════
 function loadFromOutlookSelection() {
@@ -1795,13 +1832,42 @@ async function loadInboxAttachments() {
 
   try {
     let results;
-    try {
-      results = await ewsGetAttachmentsMeta(selected);
-    } catch (_) {
-      throw new Error(
-        'Kein Postfachzugriff im Mehrfach-Auswahl-Modus (Outlook-Einschränkung). ' +
-        'Nutze stattdessen: Eine Mail öffnen → "Postfach durchsuchen" → Aktualisieren → Mails dort auswählen.'
-      );
+    const canLoadById = selected.some(e => e.fromSelection)
+      && typeof Office.context.mailbox.loadItemByIdAsync === 'function';
+
+    if (canLoadById) {
+      // Mailbox 1.15 path: load each selected item individually to read its attachments
+      results = [];
+      for (const item of selected) {
+        let loadedItem;
+        try {
+          loadedItem = await loadItemById(item.id);
+          const atts = (loadedItem.attachments || [])
+            .filter(a => a.attachmentType === Office.MailboxEnums.AttachmentType.File && !a.isInline)
+            .map(a => ({
+              loadedItemId: item.id,
+              id:           a.id,
+              name:         a.name,
+              size:         a.size || 0,
+              contentType:  a.contentType || 'application/octet-stream',
+            }));
+          results.push({ subject: item.subject, atts });
+        } catch (_) {
+          results.push({ subject: item.subject, atts: [] });
+        } finally {
+          if (loadedItem) await unloadItem(loadedItem);
+        }
+      }
+    } else {
+      // EWS path: works when single mail is open (inbox tab manual search)
+      try {
+        results = await ewsGetAttachmentsMeta(selected);
+      } catch (_) {
+        throw new Error(
+          'Kein Postfachzugriff. Outlook 1.15 nicht verfügbar und kein EWS-Kontext. ' +
+          'Nutze stattdessen: Eine Mail öffnen → "Postfach durchsuchen" → Aktualisieren.'
+        );
+      }
     }
     inboxAttachments = [];
     results.forEach((r, emailIdx) => {
