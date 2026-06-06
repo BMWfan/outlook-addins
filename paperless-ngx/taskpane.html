@@ -785,7 +785,7 @@
         <button class="btn-test" style="width:auto;padding:4px 10px;" onclick="loadInbox()">↺ Aktualisieren</button>
       </div>
       <div style="padding:7px 14px; border-bottom:1px solid var(--border); font-size:10px; color:var(--muted); line-height:1.5;">
-        Eine einzelne Mail öffnen → Add-in starten → hier "Aktualisieren" → Mails auswählen → "Anhänge laden".
+        "Aktualisieren" lädt die letzten Mails mit Anhängen aus dem Posteingang.
       </div>
       <div class="att-list" id="inboxList">
         <div class="empty"><div class="empty-icon">📬</div>Klicke "Aktualisieren" um Mails zu laden.</div>
@@ -1799,9 +1799,8 @@ async function loadInboxAttachments() {
       results = await ewsGetAttachmentsMeta(selected);
     } catch (_) {
       throw new Error(
-        'Outlook-Multiselect erlaubt keinen Postfachzugriff (API-Einschränkung). ' +
-        'Öffne stattdessen eine einzelne Mail → Add-in öffnet sich → ' +
-        'Tab "Postfach durchsuchen" → Aktualisieren → Mails manuell auswählen.'
+        'Kein Postfachzugriff im Mehrfach-Auswahl-Modus (Outlook-Einschränkung). ' +
+        'Nutze stattdessen: Eine Mail öffnen → "Postfach durchsuchen" → Aktualisieren → Mails dort auswählen.'
       );
     }
     inboxAttachments = [];
