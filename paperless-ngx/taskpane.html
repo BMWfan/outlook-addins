@@ -1553,7 +1553,9 @@ function getCallbackToken() {
 }
 
 async function restGetAttachmentsMeta(items) {
-  const token   = await getCallbackToken();
+  let token;
+  try { token = await getCallbackToken(); }
+  catch (e) { throw new Error('Token: ' + e.message); }
   const baseUrl = (Office.context.mailbox.restUrl || 'https://outlook.office.com').replace(/\/$/, '');
   const results = [];
   for (const item of items) {
@@ -1793,9 +1795,25 @@ async function loadInboxAttachments() {
 
   try {
     const useRest = selected.some(e => e.fromSelection);
-    const results = useRest
-      ? await restGetAttachmentsMeta(selected)
-      : await ewsGetAttachmentsMeta(selected);
+    let results;
+    if (useRest) {
+      try {
+        results = await restGetAttachmentsMeta(selected);
+      } catch (restErr) {
+        // REST failed (e.g. no callback token in no-item context) — try EWS with converted IDs
+        const ewsItems = selected.map(e => ({
+          ...e,
+          id: (() => { try { return Office.context.mailbox.convertToEwsId(e.id, Office.MailboxEnums.RestVersion.v2_0); } catch (_) { return e.id; } })(),
+        }));
+        try {
+          results = await ewsGetAttachmentsMeta(ewsItems);
+        } catch (ewsErr) {
+          throw new Error('REST: ' + restErr.message + ' | EWS: ' + ewsErr.message);
+        }
+      }
+    } else {
+      results = await ewsGetAttachmentsMeta(selected);
+    }
     inboxAttachments = [];
     results.forEach((r, emailIdx) => {
       r.atts.forEach(a => inboxAttachments.push({ ...a, emailSubject: r.subject, emailIdx }));
